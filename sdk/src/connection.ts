@@ -33,6 +33,11 @@ type SocketLike = {
   ): void;
   removeEventListener(type: "open", listener: () => void): void;
   removeEventListener(type: "error", listener: () => void): void;
+  removeEventListener(type: "close", listener: () => void): void;
+  removeEventListener(
+    type: "message",
+    listener: (event: { data: unknown }) => void,
+  ): void;
 };
 
 export class HorizonDBAuthError extends Error {
@@ -68,6 +73,32 @@ function errorFromResponse(packet: ResponsePacket): Error {
 
 const SOCKET_OPEN = 1;
 
+// Reconnection backoff bounds.
+const RECONNECT_BASE_DELAY_MS = 250;
+const RECONNECT_MAX_DELAY_MS = 5_000;
+
+/**
+ * Races `promise` against a timeout; the timer is always cleaned up so
+ * settled calls never keep the process alive.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  error: Error,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(error), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class Connection {
   readonly url: string;
   readonly ready: Promise<void>;
@@ -78,6 +109,9 @@ export class Connection {
   private readonly pending = new Map<string, PendingEntry>();
   private sessionId: string | null = null;
   private sessionValid = false;
+  private explicitlyClosed = false;
+  /** In-flight reconnect; requests wait for it instead of failing. */
+  private reconnectGate: Promise<void> | null = null;
 
   constructor(options: ConnectionOptions) {
     this.url = options.url;
@@ -100,8 +134,20 @@ export class Connection {
     return Connection.defaultSocket(this.url);
   }
 
-  private async open(): Promise<void> {
-    this.socket = this.createSocket();
+  /**
+   * Creates a fresh socket, wires the message/close handlers (before the open
+   * handshake, so failed attempts also trigger the close path) and resolves
+   * once the socket is open.
+   */
+  private async openSocket(): Promise<void> {
+    const socket = this.createSocket();
+    this.socket = socket;
+    socket.addEventListener("message", (event) => {
+      this.handleMessage(event.data);
+    });
+    socket.addEventListener("close", () => {
+      this.handleClose(socket);
+    });
     await new Promise<void>((resolve, reject) => {
       const onOpen = () => {
         cleanup();
@@ -112,18 +158,89 @@ export class Connection {
         reject(new Error(`unable to connect to ${this.url}`));
       };
       const cleanup = () => {
-        this.socket.removeEventListener("open", onOpen);
-        this.socket.removeEventListener("error", onError);
+        socket.removeEventListener("open", onOpen);
+        socket.removeEventListener("error", onError);
       };
-      this.socket.addEventListener("open", onOpen);
-      this.socket.addEventListener("error", onError);
+      socket.addEventListener("open", onOpen);
+      socket.addEventListener("error", onError);
     });
-    this.socket.addEventListener("message", (event) => {
-      this.handleMessage(event.data);
+  }
+
+  private open(): Promise<void> {
+    return this.openSocket();
+  }
+
+  private handleClose(socket: SocketLike): void {
+    // Ignore close events from sockets that were already superseded.
+    if (this.socket !== socket) return;
+    this.rejectAllPending(new ConnectionClosedError());
+    this.sessionId = null;
+    this.sessionValid = false;
+    if (this.explicitlyClosed) return;
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectGate) return;
+    const gate = this.reconnectWithBackoff().finally(() => {
+      if (this.reconnectGate === gate) this.reconnectGate = null;
     });
-    this.socket.addEventListener("close", () => {
-      this.rejectAllPending(new ConnectionClosedError());
-    });
+    this.reconnectGate = gate;
+  }
+
+  /**
+   * Re-opens the socket with exponential backoff until it succeeds or the
+   * connection is explicitly closed. Re-authenticates once reconnected.
+   */
+  private async reconnectWithBackoff(): Promise<void> {
+    let delay = RECONNECT_BASE_DELAY_MS;
+    while (!this.explicitlyClosed) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, RECONNECT_MAX_DELAY_MS);
+      try {
+        await this.openSocket();
+        if (this.username !== undefined && this.password !== undefined) {
+          await this.login(this.username, this.password);
+        }
+        return;
+      } catch {
+        // Keep retrying with backoff.
+      }
+    }
+  }
+
+  /**
+   * Waits until the current socket is open. While a reconnect is in flight the
+   * reconnect gate is awaited; otherwise the socket's own open/close events
+   * drive the loop (a close means the close handler will schedule a reconnect
+   * that replaces the socket).
+   */
+  private async waitUntilOpen(): Promise<void> {
+    while (true) {
+      if (this.explicitlyClosed) throw new ConnectionClosedError();
+      const socket = this.socket;
+      if (socket.readyState === SOCKET_OPEN) return;
+      if (this.reconnectGate) {
+        await this.reconnectGate.catch(() => {});
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        const onOpen = () => {
+          cleanup();
+          resolve();
+        };
+        const onClose = () => {
+          cleanup();
+          resolve();
+        };
+        const cleanup = () => {
+          socket.removeEventListener("open", onOpen);
+          socket.removeEventListener("close", onClose);
+        };
+        socket.addEventListener("open", onOpen);
+        socket.addEventListener("close", onClose);
+      });
+    }
   }
 
   private handleMessage(data: unknown): void {
@@ -156,7 +273,7 @@ export class Connection {
   async login(username: string, password: string): Promise<void> {
     let data: { sessionId?: string } | undefined;
     try {
-      data = await this.send<{ sessionId?: string }>("login", {
+      data = await this.transmit<{ sessionId?: string }>("login", {
         login: username,
         password,
       });
@@ -184,7 +301,6 @@ export class Connection {
     operation: string,
     fields: Record<string, unknown> = {},
   ): Promise<T> {
-
     try {
       return await this.send<T>(operation, fields);
     } catch (error) {
@@ -199,7 +315,31 @@ export class Connection {
     }
   }
 
-  private send<T = Json>(
+  private async send<T = Json>(
+    operation: string,
+    fields: Record<string, unknown> = {},
+  ): Promise<T> {
+    const wait = this.waitUntilOpen();
+    if (this.requestTimeoutMs > 0) {
+      await withTimeout(
+        wait,
+        this.requestTimeoutMs,
+        new HorizonDBTimeoutError(operation),
+      );
+    } else {
+      await wait;
+    }
+    if (this.socket.readyState !== SOCKET_OPEN) {
+      throw new ConnectionClosedError();
+    }
+    return this.transmit<T>(operation, fields);
+  }
+
+  /**
+   * Sends a packet and correlates the answer. The caller must ensure the
+   * socket is open — used by both `send` and (re-)login.
+   */
+  private transmit<T = Json>(
     operation: string,
     fields: Record<string, unknown> = {},
   ): Promise<T> {
@@ -231,6 +371,7 @@ export class Connection {
   }
 
   close(): void {
+    this.explicitlyClosed = true;
     this.rejectAllPending(new ConnectionClosedError());
     this.socket.close();
   }

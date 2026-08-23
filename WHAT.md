@@ -41,7 +41,7 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 ## Performance
 
 - `CREATE TABLE IF NOT EXISTS` executed once per table per process (single-flight + HashSet)
-- Read-modify-write operations (add/sub/push/pull/nested set & delete) use **optimistic compare-and-set with backoff** — no lock queues, no lost updates (benchmark invariants verify this)
+- Read-modify-write operations (add/sub/push/pull/nested set & delete) run in a single transaction that locks the row (`SELECT ... FOR UPDATE`) — concurrent writers queue on the row lock instead of retry-storming, so no lost updates and no livelock under hot-key contention (benchmark invariants verify this)
 - Lock-free metrics (`AtomicU64`)
 - Bounded cache (`capacity`) with periodic expired-entry purge
 - Connections beyond `server.max_connections` rejected immediately
