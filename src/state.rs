@@ -4,7 +4,6 @@ use anyhow::Context;
 use tracing::info;
 
 use crate::auth::{Authenticator, SessionStore};
-use crate::cache::TtlCache;
 use crate::config::AppConfig;
 use crate::db::Repository;
 use crate::metrics::Metrics;
@@ -12,7 +11,6 @@ use crate::metrics::Metrics;
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub repository: Repository,
-    pub cache: TtlCache,
     pub sessions: SessionStore,
     pub authenticator: Authenticator,
     pub metrics: Metrics,
@@ -30,12 +28,10 @@ impl AppState {
             Authenticator::new(&config.auth).context("invalid auth configuration")?;
 
         let sessions = SessionStore::new(config.auth.session_timeout_secs);
-        let cache = TtlCache::new(config.cache.capacity);
 
         Ok(Arc::new(Self {
             config: Arc::new(config),
             repository,
-            cache,
             sessions,
             authenticator,
             metrics: Metrics::default(),
@@ -43,6 +39,6 @@ impl AppState {
     }
 
     pub async fn shutdown(&self) {
-        self.repository.pool().close().await;
+        self.repository.shutdown().await;
     }
 }

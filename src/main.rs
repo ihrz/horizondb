@@ -2,7 +2,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod auth;
-mod cache;
 mod config;
 mod db;
 mod error;

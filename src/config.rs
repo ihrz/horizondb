@@ -12,8 +12,8 @@ const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_LIFETIME_SECS: u64 = 1800;
 const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 3600;
-const DEFAULT_CACHE_CAPACITY: usize = 10_000;
-const MAX_CACHE_CAPACITY: usize = 1_000_000;
+/// How often buffered writes are batch-flushed to `PostgreSQL`.
+const DEFAULT_FLUSH_INTERVAL_SECS: u64 = 300;
 
 pub struct Secret(String);
 
@@ -55,8 +55,6 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
-    #[serde(default)]
-    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +84,8 @@ pub struct DatabaseConfig {
     pub idle_timeout_secs: u64,
     #[serde(default = "default_max_lifetime_secs")]
     pub max_lifetime_secs: u64,
+    #[serde(default = "default_flush_interval_secs")]
+    pub flush_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,20 +97,6 @@ pub struct AuthConfig {
     pub password_hash: Option<String>,
     #[serde(default = "default_session_timeout_secs")]
     pub session_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CacheConfig {
-    #[serde(default = "default_cache_capacity")]
-    pub capacity: usize,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            capacity: default_cache_capacity(),
-        }
-    }
 }
 
 fn default_server_max_connections() -> usize {
@@ -141,8 +127,8 @@ fn default_session_timeout_secs() -> u64 {
     DEFAULT_SESSION_TIMEOUT_SECS
 }
 
-fn default_cache_capacity() -> usize {
-    DEFAULT_CACHE_CAPACITY
+fn default_flush_interval_secs() -> u64 {
+    DEFAULT_FLUSH_INTERVAL_SECS
 }
 
 impl AppConfig {
@@ -182,6 +168,11 @@ impl AppConfig {
                 "database timeouts must be greater than zero".to_owned(),
             ));
         }
+        if self.database.flush_interval_secs == 0 {
+            return Err(AppError::Config(
+                "database.flush_interval_secs must be greater than zero".to_owned(),
+            ));
+        }
         if self.auth.username.trim().is_empty() {
             return Err(AppError::Config(
                 "auth.username must not be empty".to_owned(),
@@ -205,11 +196,6 @@ impl AppConfig {
         if has_password == has_hash {
             return Err(AppError::Config(
                 "auth requires exactly one of password or password_hash".to_owned(),
-            ));
-        }
-        if self.cache.capacity == 0 || self.cache.capacity > MAX_CACHE_CAPACITY {
-            return Err(AppError::Config(
-                "cache.capacity must be between 1 and 1000000".to_owned(),
             ));
         }
         Ok(())
@@ -258,10 +244,13 @@ password = "secret"
         );
         assert_eq!(config.database.min_connections, 0);
         assert_eq!(
+            config.database.flush_interval_secs,
+            DEFAULT_FLUSH_INTERVAL_SECS
+        );
+        assert_eq!(
             config.auth.session_timeout_secs,
             DEFAULT_SESSION_TIMEOUT_SECS
         );
-        assert_eq!(config.cache.capacity, DEFAULT_CACHE_CAPACITY);
         assert_eq!(config.database.password.expose(), "pw");
     }
 
@@ -276,8 +265,8 @@ password = "secret"
     }
 
     #[test]
-    fn rejects_zero_cache_capacity() {
-        let raw = format!("{VALID_MINIMAL}\n[cache]\ncapacity = 0");
+    fn rejects_zero_flush_interval() {
+        let raw = VALID_MINIMAL.replace("[database]", "[database]\nflush_interval_secs = 0");
         let config = parse(&raw).unwrap();
         assert!(config.validate().is_err());
     }

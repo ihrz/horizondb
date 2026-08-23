@@ -8,8 +8,6 @@ pub struct Metrics {
     active_connections: AtomicU64,
     requests_total: AtomicU64,
     requests_failed: AtomicU64,
-    cache_hits: AtomicU64,
-    cache_misses: AtomicU64,
 }
 
 impl Metrics {
@@ -30,14 +28,6 @@ impl Metrics {
         self.requests_failed.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn cache_hit(&self) {
-        self.cache_hits.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn cache_miss(&self) {
-        self.cache_misses.fetch_add(1, Ordering::Relaxed);
-    }
-
     pub fn active_connections(&self) -> u64 {
         self.active_connections.load(Ordering::Relaxed)
     }
@@ -50,26 +40,24 @@ impl Metrics {
         self.requests_total.load(Ordering::Relaxed)
     }
 
-    pub fn log_stats(&self, active_sessions: usize) {
+    pub fn log_stats(&self, active_sessions: usize, memory_hits: u64, memory_misses: u64) {
         let total_requests = self.requests_total.load(Ordering::Relaxed);
         let failed_requests = self.requests_failed.load(Ordering::Relaxed);
-        let cache_hits = self.cache_hits.load(Ordering::Relaxed);
-        let cache_misses = self.cache_misses.load(Ordering::Relaxed);
 
         #[allow(clippy::cast_precision_loss)]
-        let (success_rate, cache_hit_rate) = {
+        let (success_rate, memory_hit_rate) = {
             let success_rate = if total_requests == 0 {
                 100.0
             } else {
                 ((total_requests - failed_requests) as f64 / total_requests as f64) * 100.0
             };
-            let lookups = cache_hits + cache_misses;
-            let cache_hit_rate = if lookups == 0 {
+            let lookups = memory_hits + memory_misses;
+            let memory_hit_rate = if lookups == 0 {
                 0.0
             } else {
-                (cache_hits as f64 / lookups as f64) * 100.0
+                (memory_hits as f64 / lookups as f64) * 100.0
             };
-            (success_rate, cache_hit_rate)
+            (success_rate, memory_hit_rate)
         };
 
         info!(
@@ -78,7 +66,7 @@ impl Metrics {
             active_sessions,
             total_requests = self.total_requests(),
             success_rate = format!("{success_rate:.2}%"),
-            cache_hit_rate = format!("{cache_hit_rate:.2}%"),
+            memory_hit_rate = format!("{memory_hit_rate:.2}%"),
             "server stats"
         );
     }
@@ -100,6 +88,6 @@ mod tests {
         metrics.connection_closed();
         assert_eq!(metrics.active_connections(), 1);
 
-        metrics.log_stats(3);
+        metrics.log_stats(3, 8, 2);
     }
 }

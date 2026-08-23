@@ -15,6 +15,8 @@ min_connections = 0
 acquire_timeout_secs = 5
 idle_timeout_secs = 30
 max_lifetime_secs = 1800
+# How often buffered writes are batch-flushed to PostgreSQL (seconds).
+flush_interval_secs = 300
 
 [auth]
 username = "admin"
@@ -24,6 +26,3 @@ username = "admin"
 password = "secret"
 # password_hash = "$argon2id$v=19$m=19456,t=2,p=1$..."
 session_timeout_secs = 3600
-
-[cache]
-capacity = 10000

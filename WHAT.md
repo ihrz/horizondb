@@ -2,16 +2,16 @@
 
 ## What?
 
-HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (edition 2024). It exposes its API over **WebSocket**, persists to **PostgreSQL**, and serves reads through a bounded in-memory TTL cache.
+HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (edition 2024). It exposes its API over **WebSocket** and persists to **PostgreSQL** through an in-memory **write-behind buffer**: writes land in memory first (reads are served from memory, including dot-nested keys), and a background task batch-flushes them to PostgreSQL every `flush_interval_secs`.
 
 ## Key characteristics
 
 - **Language**: Rust edition 2024, async Tokio, `unsafe_code = "forbid"`
 - **Protocol**: WebSocket JSON — responses shaped `{ id, type, data, error }`
-- **Storage**: PostgreSQL via `sqlx` 0.8 — tables created on demand (`id VARCHAR(255)` PK, `value TEXT` holding JSON)
-- **Cache**: capacity-bounded TTL cache (expired first, then oldest)
+- **Storage**: PostgreSQL via `sqlx` 0.8 — tables created on demand (`id VARCHAR(255)` PK, `value TEXT` holding JSON); batch flush via `UNNEST` upserts and `ANY` deletes
+- **Write-behind**: every write updates the in-memory store immediately and is flushed in batches (default every 300 s, configurable via `database.flush_interval_secs`); keys loaded from PostgreSQL lazily on first access; graceful shutdown flushes everything
 - **Auth**: constant-time comparison (`subtle`) or **argon2id** hash; UUID sessions with automatic expiry
-- **Monitoring**: atomic counters + periodic stats (connections, success rate, cache hit rate)
+- **Monitoring**: atomic counters + periodic stats (connections, success rate, memory hit rate)
 
 ## Architecture (`src/`)
 
@@ -19,11 +19,10 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 |---|---|
 | `main.rs` | Bootstrap: tracing, config load, server start |
 | `config.rs` | Typed config + validation (XOR password/password_hash…) |
-| `state.rs` | Shared `AppState` (repo, cache, sessions, metrics) + shutdown |
-| `server.rs` | Accept loop, connection limit (`Semaphore`), signals |
+| `state.rs` | Shared `AppState` (repo, sessions, metrics) + shutdown |
+| `server.rs` | Accept loop, connection limit (`Semaphore`), signals, purge loops |
 | `handlers.rs` | Operation dispatch + business logic |
-| `db.rs` | sqlx repository: DDL ensured once per table, CAS mutations |
-| `cache.rs` | Bounded per-table TTL cache |
+| `db.rs` | Write-behind repository: in-memory store + dirty tracking + batched flush to `PostgreSQL` |
 | `auth.rs` | Credential verification + session store |
 | `values.rs` | Pure JSON operations (nested keys) + table validation |
 | `models.rs` | Protocol request/response packets |
@@ -41,18 +40,22 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 ## Performance
 
 - `CREATE TABLE IF NOT EXISTS` executed once per table per process (single-flight + HashSet)
-- Read-modify-write operations (add/sub/push/pull/nested set & delete) are serialized per key by an in-process sharded mutex plus a Postgres row lock (`SELECT ... FOR UPDATE` inside a transaction) — writers queue instead of retry-storming, so no lost updates and no livelock under hot-key contention (benchmark invariants verify this)
+- Writes (set/add/sub/push/pull/nested set & delete) touch **only memory** — no PostgreSQL round trip in the hot path; the pool is used just for reads of not-yet-loaded keys and the periodic batch flush
+- Read-modify-write operations are serialized per key by an in-process sharded mutex — no lost updates, no row locks, no retries (benchmark invariants verify this)
+- Flush batches per table: `INSERT ... SELECT UNNEST(...) ... ON CONFLICT DO UPDATE` for writes, `DELETE ... WHERE id = ANY(...)` for deletes, `DELETE FROM` for cleared tables
 - Lock-free metrics (`AtomicU64`)
-- Bounded cache (`capacity`) with periodic expired-entry purge
+- TTL entries (`cache` operation) self-expire in memory; the background purge removes them every minute
 - Connections beyond `server.max_connections` rejected immediately
+
+> **Durability note**: writes are only in memory until the next flush. If the process crashes or is killed, up to `flush_interval_secs` of writes are lost. A graceful shutdown (SIGINT/SIGTERM) flushes everything first.
 
 ## Diagnostics
 
 Verbose per-request and per-call logging is driven by `RUST_LOG` (defaults to `info`):
 
 ```bash
-RUST_LOG=debug cargo run   # every request (operation, table, key, id, duration) + mutate retries
-RUST_LOG=trace cargo run   # also every repository call (get/set/delete/mutate) + slow-call details
+RUST_LOG=debug cargo run   # every request (operation, table, key, id, duration) + flush batches
+RUST_LOG=trace cargo run   # also every repository call (get/set/delete/mutate)
 ```
 
 Internal failures are always logged at `error` with the table and key involved.
@@ -77,14 +80,13 @@ Internal failures are always logged at `error` with the table and key involved.
 ## Configuration (`config.toml`, see `example.config.toml`)
 
 - `[server]` host, port, max_connections, max_message_size
-- `[database]` connection + pool sizing/timeouts
+- `[database]` connection + pool sizing/timeouts + `flush_interval_secs` (write-behind flush period, default 300)
 - `[auth]` username + `password` **or** `password_hash` (argon2id), session_timeout_secs
-- `[cache]` capacity
 
 ## Quality gates
 
 ```bash
-./scripts/test.sh            # Rust tests (28) + SDK typecheck + SDK tests (34)
+./scripts/test.sh            # Rust tests + SDK typecheck + SDK tests
 cargo clippy --all-targets   # 0 warnings (pedantic enabled)
 cargo fmt --check
 ```

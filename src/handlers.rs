@@ -113,17 +113,8 @@ async fn get_value(state: &AppState, packet: &PacketMessage) -> Result<Value, Ap
     let (table, base, path) = scope(packet)?;
     let default_value = packet.default_value.clone();
 
-    if let Some(cached) = state.cache.get(table, &base).await {
-        state.metrics.cache_hit();
-        return Ok(project(&cached, &path, default_value));
-    }
-    state.metrics.cache_miss();
-
     match state.repository.get(table, &base).await? {
-        Some(value) => {
-            state.cache.insert(table, &base, value.clone(), None).await;
-            Ok(project(&value, &path, default_value))
-        }
+        Some(value) => Ok(project(&value, &path, default_value)),
         None => Ok(default_value.unwrap_or(Value::Null)),
     }
 }
@@ -144,16 +135,14 @@ async fn set_value(state: &AppState, packet: &PacketMessage) -> Result<Value, Ap
 
     if path.is_empty() {
         state.repository.set(table, &base, &value).await?;
-        state.cache.insert(table, &base, value, None).await;
     } else {
-        let root = state
+        state
             .repository
             .mutate(table, &base, json!({}), |mut doc| {
                 values::set_nested(&mut doc, &path, value.clone())?;
                 Ok(Some(doc))
             })
             .await?;
-        state.cache.insert(table, &base, root, None).await;
     }
     Ok(json!({ "success": true }))
 }
@@ -175,14 +164,13 @@ async fn adjust_amount(
         json!({})
     };
 
-    let root = state
+    state
         .repository
         .mutate(table, &base, absent, |mut doc| {
             values::add_amount(&mut doc, &path, delta)?;
             Ok(Some(doc))
         })
         .await?;
-    state.cache.insert(table, &base, root, None).await;
     Ok(json!({ "success": true }))
 }
 
@@ -191,9 +179,8 @@ async fn delete_key(state: &AppState, packet: &PacketMessage) -> Result<Value, A
 
     if path.is_empty() {
         state.repository.delete(table, &base).await?;
-        state.cache.invalidate(table, &base).await;
     } else {
-        let root = state
+        state
             .repository
             .mutate(table, &base, json!({}), |mut doc| {
                 values::delete_nested(&mut doc, &path);
@@ -204,11 +191,6 @@ async fn delete_key(state: &AppState, packet: &PacketMessage) -> Result<Value, A
                 }
             })
             .await?;
-        if root.is_null() {
-            state.cache.invalidate(table, &base).await;
-        } else {
-            state.cache.insert(table, &base, root, None).await;
-        }
     }
     Ok(json!({ "success": true }))
 }
@@ -217,14 +199,13 @@ async fn push_element(state: &AppState, packet: &PacketMessage) -> Result<Value,
     let (table, base, path) = scope(packet)?;
     let element = packet.element.clone().unwrap_or(Value::Null);
 
-    let root = state
+    state
         .repository
         .mutate(table, &base, json!([]), |mut doc| {
             values::push_element(&mut doc, &path, element.clone())?;
             Ok(Some(doc))
         })
         .await?;
-    state.cache.insert(table, &base, root, None).await;
     Ok(json!({ "success": true }))
 }
 
@@ -232,25 +213,18 @@ async fn pull_element(state: &AppState, packet: &PacketMessage) -> Result<Value,
     let (table, base, path) = scope(packet)?;
     let element = packet.element.clone().unwrap_or(Value::Null);
 
-    let root = state
+    state
         .repository
         .mutate(table, &base, json!([]), |mut doc| {
             values::pull_element(&mut doc, &path, &element)?;
             Ok(Some(doc))
         })
         .await?;
-    state.cache.insert(table, &base, root, None).await;
     Ok(json!({ "success": true }))
 }
 
 async fn has_key(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let (table, base, path) = scope(packet)?;
-
-    if let Some(cached) = state.cache.get(table, &base).await {
-        state.metrics.cache_hit();
-        return Ok(json!(path_exists(&cached, &path)));
-    }
-    state.metrics.cache_miss();
 
     let exists = match state.repository.get(table, &base).await? {
         Some(value) => path_exists(&value, &path),
@@ -277,7 +251,6 @@ async fn list_all(state: &AppState, packet: &PacketMessage) -> Result<Value, App
 async fn delete_all(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let table = table_of(packet);
     state.repository.clear_table(table).await?;
-    state.cache.invalidate_table(table).await;
     Ok(json!({ "success": true }))
 }
 
@@ -288,30 +261,31 @@ async fn cache_with_ttl(state: &AppState, packet: &PacketMessage) -> Result<Valu
         return Err(AppError::validation("ttl must be between 1ms and 30 days"));
     }
     let value = packet.value.clone().unwrap_or(Value::Null);
+    let ttl = Duration::from_millis(ttl_ms);
 
-    let root = if path.is_empty() {
-        state.repository.set(table, &base, &value).await?;
-        value
-    } else {
+    if path.is_empty() {
         state
+            .repository
+            .set_with_ttl(table, &base, &value, ttl)
+            .await?;
+    } else {
+        let root = state
             .repository
             .mutate(table, &base, json!({}), |mut doc| {
                 values::set_nested(&mut doc, &path, value.clone())?;
                 Ok(Some(doc))
             })
-            .await?
-    };
-
-    let expires_at = Instant::now() + Duration::from_millis(ttl_ms);
-    state
-        .cache
-        .insert(table, &base, root, Some(expires_at))
-        .await;
+            .await?;
+        state
+            .repository
+            .set_with_ttl(table, &base, &root, ttl)
+            .await?;
+    }
 
     let repository = state.repository.clone();
     let cleanup_table = table.to_owned();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(ttl_ms)).await;
+        tokio::time::sleep(ttl).await;
         if let Err(error) = repository.delete(&cleanup_table, &base).await {
             tracing::debug!(%error, "ttl cleanup failed");
         }

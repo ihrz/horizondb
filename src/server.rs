@@ -20,7 +20,7 @@ use crate::{
 };
 
 const SESSION_PURGE_INTERVAL: Duration = Duration::from_mins(5);
-const CACHE_PURGE_INTERVAL: Duration = Duration::from_mins(1);
+const MEMORY_PURGE_INTERVAL: Duration = Duration::from_mins(1);
 const STATS_INTERVAL: Duration = Duration::from_mins(1);
 
 pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
@@ -33,7 +33,7 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
     let permits = Arc::new(Semaphore::new(state.config.server.max_connections));
 
     let session_purger = tokio::spawn(session_purge_loop(Arc::clone(&state)));
-    let cache_purger = tokio::spawn(cache_purge_loop(Arc::clone(&state)));
+    let memory_purger = tokio::spawn(memory_purge_loop(Arc::clone(&state)));
     let stats_logger = tokio::spawn(stats_loop(Arc::clone(&state)));
 
     loop {
@@ -66,11 +66,14 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
     }
 
     session_purger.abort();
-    cache_purger.abort();
+    memory_purger.abort();
     stats_logger.abort();
 
     let active_sessions = state.sessions.active_sessions().await;
-    state.metrics.log_stats(active_sessions);
+    let (memory_hits, memory_misses) = state.repository.memory_stats();
+    state
+        .metrics
+        .log_stats(active_sessions, memory_hits, memory_misses);
     state.shutdown().await;
     tracing::info!("HorizonDB stopped");
     Ok(())
@@ -150,13 +153,13 @@ async fn session_purge_loop(state: Arc<AppState>) {
     }
 }
 
-async fn cache_purge_loop(state: Arc<AppState>) {
-    let mut ticker = interval(CACHE_PURGE_INTERVAL);
+async fn memory_purge_loop(state: Arc<AppState>) {
+    let mut ticker = interval(MEMORY_PURGE_INTERVAL);
     loop {
         ticker.tick().await;
-        let purged = state.cache.purge_expired().await;
+        let purged = state.repository.purge_expired().await;
         if purged > 0 {
-            tracing::debug!(purged, "expired cache entries removed");
+            tracing::debug!(purged, "expired memory entries removed");
         }
     }
 }
@@ -166,6 +169,9 @@ async fn stats_loop(state: Arc<AppState>) {
     loop {
         ticker.tick().await;
         let active_sessions = state.sessions.active_sessions().await;
-        state.metrics.log_stats(active_sessions);
+        let (memory_hits, memory_misses) = state.repository.memory_stats();
+        state
+            .metrics
+            .log_stats(active_sessions, memory_hits, memory_misses);
     }
 }
