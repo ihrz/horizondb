@@ -15,14 +15,35 @@ const MAX_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 pub async fn dispatch(state: &AppState, packet: PacketMessage) -> ResponseMessage {
     state.metrics.request_started();
     let id = packet.id.clone();
+    let started = Instant::now();
+    tracing::debug!(
+        operation = %packet.operation,
+        table = %packet.table.as_deref().unwrap_or_default(),
+        key = %packet.key.as_deref().unwrap_or_default(),
+        %id,
+        "request"
+    );
     match route(state, packet).await {
-        Ok(data) => ResponseMessage::success(id, data),
+        Ok(data) => {
+            tracing::debug!(%id, elapsed = ?Instant::now().duration_since(started), "request ok");
+            ResponseMessage::success(id, data)
+        }
         Err(error) => {
             state.metrics.request_failed();
             if error.is_internal() {
-                tracing::error!(%error, "internal request failure");
+                tracing::error!(
+                    %id,
+                    elapsed = ?Instant::now().duration_since(started),
+                    %error,
+                    "internal request failure"
+                );
             } else {
-                tracing::debug!(%error, "request rejected");
+                tracing::debug!(
+                    %id,
+                    elapsed = ?Instant::now().duration_since(started),
+                    %error,
+                    "request rejected"
+                );
             }
             ResponseMessage::failure(id, error.client_message())
         }
