@@ -1,0 +1,29 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+max_connections = 1000
+max_message_size = 1048576
+
+[database]
+host = "127.0.0.1"
+port = 5432
+database = "horizon"
+username = "horizon"
+password = "change-me"
+max_connections = 10
+min_connections = 0
+acquire_timeout_secs = 5
+idle_timeout_secs = 30
+max_lifetime_secs = 1800
+
+[auth]
+username = "admin"
+# Exactly one of the two fields is required:
+#   - password      : plaintext secret (constant-time comparison)
+#   - password_hash : argon2id PHC hash (recommended in production)
+password = "secret"
+# password_hash = "$argon2id$v=19$m=19456,t=2,p=1$..."
+session_timeout_secs = 3600
+
+[cache]
+capacity = 10000

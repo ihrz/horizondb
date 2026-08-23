@@ -1,0 +1,5 @@
+{
+  "name": "ihrzdb",
+  "private": true,
+  "exports": { ".": "./sdk/src/index.ts" }
+}

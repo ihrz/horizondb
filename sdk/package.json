@@ -1,0 +1,30 @@
+{
+  "name": "@horizondb/sdk",
+  "version": "0.1.0",
+  "description": "Bun-native TypeScript client for HorizonDB WebSocket servers",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "horizondb",
+    "database",
+    "websocket",
+    "bun",
+    "key-value"
+  ],
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}
