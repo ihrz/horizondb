@@ -166,7 +166,9 @@ impl Repository {
         tracing::trace!(table, "repository.list_all");
 
         let mut merged: HashMap<String, Value> = HashMap::new();
-        let tables = self.memory.read().await;
+
+        // Do not hold the memory lock during the (potentially slow) table scan:
+        // fetch the "cleared" flag, run the query, then merge memory afterwards.
         let cleared = self.dirty.lock().await.cleared.contains(table);
 
         if !cleared {
@@ -202,17 +204,20 @@ impl Repository {
         for (_, key) in &deletes {
             merged.remove(key);
         }
-        if let Some(entries) = tables.get(table) {
-            for (key, entry) in entries {
-                if entry.is_expired() {
-                    continue;
-                }
-                if upserts.contains(&(table.to_owned(), key.clone())) {
-                    merged.insert(key.clone(), entry.value.clone());
+
+        {
+            let tables = self.memory.read().await;
+            if let Some(entries) = tables.get(table) {
+                for (key, entry) in entries {
+                    if entry.is_expired() {
+                        continue;
+                    }
+                    if upserts.contains(&(table.to_owned(), key.clone())) {
+                        merged.insert(key.clone(), entry.value.clone());
+                    }
                 }
             }
         }
-        drop(tables);
 
         let mut rows: Vec<(String, Value)> = merged.into_iter().collect();
         rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -409,25 +414,36 @@ impl Repository {
     /// never touched since startup. Expired TTL entries are treated as absent
     /// (`PostgreSQL` may still hold them until the next flush deletes them).
     async fn read_inner(&self, table: &str, key: &str) -> Result<Option<Value>, AppError> {
+        // Fast path: serve from memory with a shared (read) lock. Reads must
+        // not be serialized behind each other nor behind `list_all`'s scan.
         {
-            let mut tables = self.memory.write().await;
-            if let Some(entry) = tables
-                .get_mut(table)
-                .and_then(|entries| entries.get_mut(key))
-            {
-                self.memory_hits.fetch_add(1, Ordering::Relaxed);
+            let tables = self.memory.read().await;
+            if let Some(entry) = tables.get(table).and_then(|entries| entries.get(key)) {
                 if !entry.is_expired() {
+                    self.memory_hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(Some(entry.value.clone()));
                 }
-                // Expired: drop it and treat the key as absent.
-                if let Some(entries) = tables.get_mut(table) {
-                    entries.remove(key);
-                }
-                self.mark_delete(table, key).await;
-                return Ok(None);
             }
         }
         self.memory_misses.fetch_add(1, Ordering::Relaxed);
+
+        // Expired TTL entry: drop it under a write lock, then treat as absent.
+        let mut expired = false;
+        {
+            let mut tables = self.memory.write().await;
+            if let Some(entries) = tables.get_mut(table) {
+                if let Some(entry) = entries.get(key) {
+                    if entry.is_expired() {
+                        entries.remove(key);
+                        expired = true;
+                    }
+                }
+            }
+        }
+        if expired {
+            self.mark_delete(table, key).await;
+            return Ok(None);
+        }
 
         // The key may be logically absent: deleted or expired since the last
         // flush, or its table was cleared. `PostgreSQL` may still hold the

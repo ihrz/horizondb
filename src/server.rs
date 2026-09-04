@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
     signal,
-    sync::Semaphore,
+    sync::{Mutex, Semaphore},
     time::interval,
 };
 use tokio_tungstenite::{
@@ -89,22 +89,35 @@ async fn serve_connection(
         max_frame_size: Some(state.config.server.max_message_size),
         ..WebSocketConfig::default()
     };
-    let mut websocket = accept_async_with_config(stream, Some(websocket_config))
+    let websocket = accept_async_with_config(stream, Some(websocket_config))
         .await
         .with_context(|| format!("websocket handshake with {peer} failed"))?;
 
-    while let Some(message) = websocket.next().await {
+    // Requests already carry a unique `id` (the SDK correlates by it), so we
+    // can handle them concurrently instead of one-at-a-time. Split the socket
+    // into a shared sink + an independent stream, and spawn one task per
+    // request: a slow `all` must never block unrelated `get`s on this link.
+    let (sink, mut stream) = websocket.split();
+    let sink = Arc::new(Mutex::new(sink));
+
+    while let Some(message) = stream.next().await {
         match message {
             Ok(Message::Text(text)) => {
-                let response = match serde_json::from_str::<PacketMessage>(&text) {
-                    Ok(packet) => dispatch(&state, packet).await,
-                    Err(error) => ResponseMessage::failure(
-                        "unknown".to_owned(),
-                        format!("Invalid JSON: {error}"),
-                    ),
-                };
-                let payload = response.encode();
-                websocket.send(Message::Text(payload)).await?;
+                let state = Arc::clone(&state);
+                let sink = Arc::clone(&sink);
+                tokio::spawn(async move {
+                    let response = match serde_json::from_str::<PacketMessage>(&text) {
+                        Ok(packet) => dispatch(&state, packet).await,
+                        Err(error) => ResponseMessage::failure(
+                            "unknown".to_owned(),
+                            format!("Invalid JSON: {error}"),
+                        ),
+                    };
+                    let payload = response.encode();
+                    if let Err(error) = sink.lock().await.send(Message::Text(payload)).await {
+                        tracing::debug!(%peer, %error, "failed to send response");
+                    }
+                });
             }
             Ok(Message::Close(frame)) => {
                 tracing::debug!(%peer, ?frame, "client closed connection");
