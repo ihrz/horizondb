@@ -1,0 +1,28 @@
+[Unit]
+Description=HorizonDB key-value database server
+Documentation=https://gitlab.com/ihrz/ihrzdb
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ihrz
+Group=ihrz
+WorkingDirectory=/home/ihrz/db
+ExecStart=/home/ihrz/db/target/release/horizondb /home/ihrz/db/config.toml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+
+# SIGTERM triggers a graceful shutdown that flushes pending writes to PostgreSQL.
+# Logging defaults to "info"; use RUST_LOG=debug|trace for more detail.
+# Environment=RUST_LOG=info
+
+# Hardening (safe for a network-only server: reads config, writes to PostgreSQL).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
