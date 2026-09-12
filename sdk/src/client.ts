@@ -9,11 +9,22 @@ import {
   type HorizonDBOptions,
   type Json,
   type KeyValueEntry,
+  type MutationResponse,
 } from "./types";
 import { requireKey, resolveTable } from "./utils";
 
 export interface ResolvedHorizonDBOptions extends ConnectionOptions {
   table: string;
+}
+
+/** Options for array mutations (`push`, `pull`). */
+export interface ArrayMutationOptions {
+  /**
+   * When true the server answers with the resulting array, saving the
+   * follow-up `get` a caller would otherwise issue. Off by default because
+   * the array can be large.
+   */
+  returnValue?: boolean;
 }
 
 function resolveOptions(
@@ -29,6 +40,14 @@ function resolveOptions(
       normalized.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     table: resolveTable(normalized.table),
   };
+}
+
+function numberOf(response: MutationResponse | null | undefined): number | undefined {
+  return typeof response?.value === "number" ? response.value : undefined;
+}
+
+function arrayOf(response: MutationResponse | null | undefined): Json[] | undefined {
+  return Array.isArray(response?.value) ? response.value : undefined;
 }
 
 export class HorizonDB {
@@ -67,6 +86,11 @@ export class HorizonDB {
     return new HorizonDB(this.connection, name);
   }
 
+  /** Number of sockets opened by the underlying connection (diagnostics). */
+  get connectionCount(): number {
+    return this.connection.connectionCount;
+  }
+
   async get(key: string, defaultValue?: Json): Promise<Json | undefined>;
   async get<T = Json>(key: string, defaultValue?: Json): Promise<T | undefined>;
   async get<T = Json>(
@@ -92,43 +116,76 @@ export class HorizonDB {
     });
   }
 
-  async delete(key: string): Promise<void> {
-    await this.connection.request("delete", {
-      table: this.defaultTable,
-      key: requireKey(key),
-    });
+  /**
+   * Deletes a leaf or a whole entry. Resolves to whether the key existed
+   * (`undefined` when talking to a server that does not report it).
+   */
+  async delete(key: string): Promise<boolean | undefined> {
+    const data = await this.connection.request<MutationResponse | null>(
+      "delete",
+      {
+        table: this.defaultTable,
+        key: requireKey(key),
+      },
+    );
+    return typeof data?.existed === "boolean" ? data.existed : undefined;
   }
 
-  async add(key: string, amount = 1): Promise<void> {
-    await this.connection.request("add", {
+  /** Increments a number; resolves to the new value when the server reports it. */
+  async add(key: string, amount = 1): Promise<number | undefined> {
+    const data = await this.connection.request<MutationResponse | null>("add", {
       table: this.defaultTable,
       key: requireKey(key),
       amount,
     });
+    return numberOf(data);
   }
 
-  async sub(key: string, amount = 1): Promise<void> {
-    await this.connection.request("sub", {
+  /** Decrements a number; resolves to the new value when the server reports it. */
+  async sub(key: string, amount = 1): Promise<number | undefined> {
+    const data = await this.connection.request<MutationResponse | null>("sub", {
       table: this.defaultTable,
       key: requireKey(key),
       amount,
     });
+    return numberOf(data);
   }
 
-  async push(key: string, element: Json): Promise<void> {
-    await this.connection.request("push", {
+  /**
+   * Appends an element to an array. With `returnValue: true` resolves to
+   * the resulting array (when the server reports it).
+   */
+  async push(
+    key: string,
+    element: Json,
+    options: ArrayMutationOptions = {},
+  ): Promise<Json[] | undefined> {
+    const data = await this.connection.request<MutationResponse | null>("push", {
       table: this.defaultTable,
       key: requireKey(key),
       element,
+      ...(options.returnValue ? { returnValue: true } : {}),
     });
+    return arrayOf(data);
   }
 
-  async pull(key: string, element: Json): Promise<void> {
-    await this.connection.request("pull", {
+  /**
+   * Removes every occurrence of an element from an array. With
+   * `returnValue: true` resolves to the resulting array (when the server
+   * reports it).
+   */
+  async pull(
+    key: string,
+    element: Json,
+    options: ArrayMutationOptions = {},
+  ): Promise<Json[] | undefined> {
+    const data = await this.connection.request<MutationResponse | null>("pull", {
       table: this.defaultTable,
       key: requireKey(key),
       element,
+      ...(options.returnValue ? { returnValue: true } : {}),
     });
+    return arrayOf(data);
   }
 
   async has(key: string): Promise<boolean> {

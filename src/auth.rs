@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    time::{Duration, Instant},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Instant,
 };
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -13,6 +14,7 @@ use crate::{
     error::AppError,
 };
 
+#[derive(Clone)]
 enum CredentialVerifier {
     Plaintext(Secret),
     Argon2Hash(String),
@@ -52,6 +54,10 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len() && bool::from(left.ct_eq(right))
 }
 
+/// Credential checker. Cheap to clone so that `verify` (argon2id costs tens
+/// of milliseconds of CPU) can be moved to the blocking pool instead of
+/// stalling an async worker during a login burst.
+#[derive(Clone)]
 pub struct Authenticator {
     username: String,
     verifier: CredentialVerifier,
@@ -81,16 +87,25 @@ impl Authenticator {
 }
 
 pub struct SessionStore {
-    sessions: RwLock<HashMap<String, Instant>>,
-    timeout: Duration,
+    /// Session id -> seconds since `epoch` of the last activity. Stored as
+    /// atomics so that the hot path (`verify`) only needs the read lock:
+    /// thousands of concurrent requests must not serialize on one writer.
+    sessions: RwLock<HashMap<String, AtomicU64>>,
+    epoch: Instant,
+    timeout_secs: u64,
 }
 
 impl SessionStore {
     pub fn new(timeout_secs: u64) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
-            timeout: Duration::from_secs(timeout_secs),
+            epoch: Instant::now(),
+            timeout_secs,
         }
+    }
+
+    fn now_secs(&self) -> u64 {
+        self.epoch.elapsed().as_secs()
     }
 
     pub async fn create(&self) -> String {
@@ -98,7 +113,7 @@ impl SessionStore {
         self.sessions
             .write()
             .await
-            .insert(session_id.clone(), Instant::now());
+            .insert(session_id.clone(), AtomicU64::new(self.now_secs()));
         session_id
     }
 
@@ -106,19 +121,31 @@ impl SessionStore {
         let Some(session_id) = session_id else {
             return false;
         };
-        let mut sessions = self.sessions.write().await;
-        match sessions.get_mut(session_id) {
-            Some(last_activity) => {
-                if last_activity.elapsed() >= self.timeout {
-                    sessions.remove(session_id);
-                    false
-                } else {
-                    *last_activity = Instant::now();
-                    true
-                }
+        let now = self.now_secs();
+        let expired = {
+            let sessions = self.sessions.read().await;
+            let Some(last_activity) = sessions.get(session_id) else {
+                return false;
+            };
+            if now.saturating_sub(last_activity.load(Ordering::Relaxed)) >= self.timeout_secs {
+                true
+            } else {
+                last_activity.store(now, Ordering::Relaxed);
+                return true;
             }
-            None => false,
+        };
+        if expired {
+            let mut sessions = self.sessions.write().await;
+            // Re-check under the write lock: the session may have been
+            // refreshed by a concurrent request in the meantime.
+            let still_expired = sessions.get(session_id).is_some_and(|last_activity| {
+                now.saturating_sub(last_activity.load(Ordering::Relaxed)) >= self.timeout_secs
+            });
+            if still_expired {
+                sessions.remove(session_id);
+            }
         }
+        false
     }
 
     pub async fn revoke(&self, session_id: Option<&str>) {
@@ -128,9 +155,12 @@ impl SessionStore {
     }
 
     pub async fn purge_expired(&self) -> usize {
+        let now = self.now_secs();
         let mut sessions = self.sessions.write().await;
         let before = sessions.len();
-        sessions.retain(|_, last_activity| last_activity.elapsed() < self.timeout);
+        sessions.retain(|_, last_activity| {
+            now.saturating_sub(last_activity.load(Ordering::Relaxed)) < self.timeout_secs
+        });
         before - sessions.len()
     }
 

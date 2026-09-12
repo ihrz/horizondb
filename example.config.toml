@@ -2,7 +2,11 @@
 host = "0.0.0.0"
 port = 8080
 max_connections = 1000
-max_message_size = 1048576
+# Largest WebSocket message (request or frame) accepted from a client, in bytes.
+# A message above this limit closes that client's connection together with
+# every request it has in flight, so size it for your largest document.
+# 1 KiB .. 256 MiB, default 64 MiB.
+max_message_size = 67108864
 
 [database]
 host = "127.0.0.1"
@@ -10,7 +14,9 @@ port = 5432
 database = "horizon"
 username = "horizon"
 password = "change-me"
-max_connections = 10
+# PostgreSQL pool. Reads of keys not yet in memory (cold start) and the
+# periodic flush use it; size it for the number of clients (default 32).
+max_connections = 32
 min_connections = 0
 acquire_timeout_secs = 5
 idle_timeout_secs = 30

@@ -10,6 +10,7 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 - **Protocol**: WebSocket JSON — responses shaped `{ id, type, data, error }`
 - **Storage**: PostgreSQL via `sqlx` 0.8 — tables created on demand (`id VARCHAR(255)` PK, `value TEXT` holding JSON); batch flush via `UNNEST` upserts and `ANY` deletes
 - **Write-behind**: every write updates the in-memory store immediately and is flushed in batches (default every 300 s, configurable via `database.flush_interval_secs`); keys loaded from PostgreSQL lazily on first access; graceful shutdown flushes everything
+- **Documents are never cloned whole on the hot path**: a nested `get` copies only the addressed sub-tree, and `set`/`add`/`push`/`pull`/nested `delete` edit the stored document in place under a per-key lock. A `push` into a multi-megabyte guild document costs microseconds, not a deep copy of the document (which is what made production collapse under load)
 - **Auth**: constant-time comparison (`subtle`) or **argon2id** hash; UUID sessions with automatic expiry
 - **Monitoring**: atomic counters + periodic stats (connections, success rate, memory hit rate)
 
@@ -33,7 +34,7 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 
 - Table names validated against `[A-Za-z_][A-Za-z0-9_]{0,62}` before any SQL interpolation → injection eliminated
 - Constant-time credential comparison; optional argon2id `password_hash` in config
-- Configurable WebSocket max message size (DoS protection), frames ≤ message cap
+- Configurable WebSocket max message size (DoS protection), frames ≤ message cap; a violation is logged at `warn` with the peer address
 - Keys: length ≤ 255 bytes (column width), nesting depth ≤ 32; finite `amount` required; TTL ≤ 30 days
 - Internal errors (SQL/serialization) are logged server-side; clients receive a generic message
 
@@ -42,7 +43,13 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 - `CREATE TABLE IF NOT EXISTS` executed once per table per process (single-flight + HashSet)
 - Writes (set/add/sub/push/pull/nested set & delete) touch **only memory** — no PostgreSQL round trip in the hot path; the pool is used just for reads of not-yet-loaded keys and the periodic batch flush
 - Read-modify-write operations are serialized per key by an in-process sharded mutex — no lost updates, no row locks, no retries (benchmark invariants verify this)
-- Flush batches per table: `INSERT ... SELECT UNNEST(...) ... ON CONFLICT DO UPDATE` for writes, `DELETE ... WHERE id = ANY(...)` for deletes, `DELETE FROM` for cleared tables
+- Each stored document sits behind its own `RwLock`: readers copy only the projected sub-tree, writers mutate in place. The global store lock is only held for map lookups, never while a document is being read or copied
+- Large JSON payloads (cold reads, table scans) are parsed on the blocking pool; the flush yields between documents so a big batch cannot monopolize a runtime worker
+- Flush batches per table: `INSERT ... SELECT UNNEST(...) ... ON CONFLICT DO UPDATE` for writes (chunked: at most 500 rows / 32 MiB per statement), `DELETE ... WHERE id = ANY(...)` for deletes (at most 5 000 ids per statement), `DELETE FROM` for cleared tables. Dirty marks carry a generation number, so a write that lands while a flush is running stays dirty for the next cycle
+- Sessions are refreshed without a global write lock (atomic timestamps under a read lock)
+- At most 1 024 requests in flight per connection; beyond that the socket is not read until responses drain (TCP backpressure instead of unbounded task growth). A request that already waited longer than its client timeout (`timeoutMs` in the packet, default 10 s) is answered with `deadline exceeded` instead of being executed for a caller that gave up
+- Cold loads from `PostgreSQL` run outside the per-key write lock and are single-flighted per key; `CREATE TABLE IF NOT EXISTS` runs without holding the table registry lock
+- Connections that stay silent are pinged after 30 s and dropped after 120 s, so a half-open link releases its connection permit
 - Lock-free metrics (`AtomicU64`)
 - TTL entries (`cache` operation) self-expire in memory; the background purge removes them every minute
 - Connections beyond `server.max_connections` rejected immediately
@@ -68,10 +75,10 @@ Internal failures are always logged at `error` with the table and key involved.
 | `logout` | Destroys the session |
 | `get` | Read (dot-nested keys `a.b.c`, optional default value) |
 | `set` | Write (merges when path is nested) |
-| `delete` | Delete leaf key or whole entry |
-| `add` / `sub` | Numeric increment/decrement (default ±1, missing starts at 0) |
-| `push` | Append to a JSON array |
-| `pull` | Remove **all** occurrences of an element |
+| `delete` | Delete leaf key or whole entry; answers `{ success, existed }` |
+| `add` / `sub` | Numeric increment/decrement (default ±1, missing starts at 0); answers `{ success, value }` with the new number |
+| `push` | Append to a JSON array; with `"returnValue": true` answers `{ success, value }` with the resulting array |
+| `pull` | Remove **all** occurrences of an element; same `returnValue` option as `push` |
 | `has` | Key existence check |
 | `all` | Full table contents (server-limited to 10 000 rows) |
 | `deleteAll` | Empty the table |
@@ -79,7 +86,7 @@ Internal failures are always logged at `error` with the table and key involved.
 
 ## Configuration (`config.toml`, see `example.config.toml`)
 
-- `[server]` host, port, max_connections, max_message_size
+- `[server]` host, port, max_connections, max_message_size (default 64 MiB, max 256 MiB; a message above the limit closes the client connection together with every request in flight on it, so size it for the largest document)
 - `[database]` connection + pool sizing/timeouts + `flush_interval_secs` (write-behind flush period, default 300)
 - `[auth]` username + `password` **or** `password_hash` (argon2id), session_timeout_secs
 

@@ -3,6 +3,8 @@ import type { Json, Packet, ResponsePacket } from "../../src/types";
 export interface MockServerOptions {
   username?: string;
   password?: string;
+  /** Fixed port (default: random). Lets a test restart the server in place. */
+  port?: number;
 }
 
 const MAX_KEY_DEPTH = 32;
@@ -81,6 +83,12 @@ export class MockHorizonServer {
   private readonly sessions = new Set<string>();
   private readonly timers: ReturnType<typeof setTimeout>[] = [];
   private server: Bun.Server<undefined>;
+  /** Sockets accepted so far. */
+  openCount = 0;
+  /** Successful logins so far. */
+  loginCount = 0;
+  /** While true every incoming packet is dropped without an answer. */
+  silent = false;
 
   constructor(options: MockServerOptions = {}) {
     const username = options.username ?? "admin";
@@ -88,7 +96,7 @@ export class MockHorizonServer {
     const self = this;
 
     this.server = Bun.serve<undefined>({
-      port: 0,
+      port: options.port ?? 0,
       fetch(request, server) {
         if (server.upgrade(request)) {
           return;
@@ -96,7 +104,11 @@ export class MockHorizonServer {
         return new Response("websocket upgrade required", { status: 426 });
       },
       websocket: {
+        open() {
+          self.openCount += 1;
+        },
         message(ws, message) {
+          if (self.silent) return;
           const raw =
             typeof message === "string"
               ? message
@@ -119,6 +131,10 @@ export class MockHorizonServer {
       },
     });
     this.url = `ws://127.0.0.1:${this.server.port}`;
+  }
+
+  get port(): number {
+    return this.server.port as number;
   }
 
   stop(): void {
@@ -171,6 +187,7 @@ export class MockHorizonServer {
     if (packet.login === username && packet.password === password) {
       const sessionId = crypto.randomUUID();
       this.sessions.add(sessionId);
+      this.loginCount += 1;
       return ok(packet.id, { success: true, sessionId });
     }
     return fail(packet.id, "invalid credentials");
@@ -248,20 +265,20 @@ export class MockHorizonServer {
     const [base, path] = parseKey(packet.key as string);
     const rows = this.table(table);
     if (path.length === 0) {
-      rows.delete(base);
-      return ok(packet.id, { success: true });
+      const existed = rows.delete(base);
+      return ok(packet.id, { success: true, existed });
     }
     const stored = this.readDoc(table, base);
     if (stored === undefined) {
-      return ok(packet.id, { success: true });
+      return ok(packet.id, { success: true, existed: false });
     }
-    removePath(stored, path);
+    const existed = removePath(stored, path);
     if (isPlainObject(stored) && Object.keys(stored).length === 0) {
       rows.delete(base);
     } else {
       this.writeDoc(table, base, stored);
     }
-    return ok(packet.id, { success: true });
+    return ok(packet.id, { success: true, existed });
   }
 
   private adjust(packet: Packet, table: string, amount: number): ResponsePacket {
@@ -294,13 +311,14 @@ export class MockHorizonServer {
       }
     }
     this.writeDoc(table, base, updated);
-    return ok(packet.id, { success: true });
+    const result = walk(updated, path);
+    return ok(packet.id, { success: true, value: result.found ? result.value : null });
   }
 
   private push(packet: Packet, table: string): ResponsePacket {
     const [base, path] = parseKey(packet.key as string);
     const stored = this.readDoc(table, base);
-    const doc: Json = stored ?? [];
+    const doc: Json = stored ?? (path.length === 0 ? [] : {});
     const probe = walk(doc, path);
     if (probe.found && !Array.isArray(probe.value)) {
       return fail(packet.id, "target value is not an array");
@@ -312,13 +330,16 @@ export class MockHorizonServer {
     } catch (error) {
       return fail(packet.id, (error as Error).message);
     }
-    return ok(packet.id, { success: true });
+    return ok(
+      packet.id,
+      packet.returnValue ? { success: true, value: items } : { success: true },
+    );
   }
 
   private pull(packet: Packet, table: string): ResponsePacket {
     const [base, path] = parseKey(packet.key as string);
     const stored = this.readDoc(table, base);
-    const doc: Json = stored ?? [];
+    const doc: Json = stored ?? (path.length === 0 ? [] : {});
     const probe = walk(doc, path);
     if (probe.found && !Array.isArray(probe.value)) {
       return fail(packet.id, "target value is not an array");
@@ -331,7 +352,10 @@ export class MockHorizonServer {
     } catch (error) {
       return fail(packet.id, (error as Error).message);
     }
-    return ok(packet.id, { success: true });
+    return ok(
+      packet.id,
+      packet.returnValue ? { success: true, value: remaining } : { success: true },
+    );
   }
 
   private has(packet: Packet, table: string): ResponsePacket {

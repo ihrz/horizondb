@@ -8,6 +8,7 @@ export {
 } from "./connection";
 export {
   HorizonDB,
+  type ArrayMutationOptions,
   type ResolvedHorizonDBOptions,
 } from "./client";
 export {
@@ -16,6 +17,7 @@ export {
   type HorizonDBOptions,
   type Json,
   type KeyValueEntry,
+  type MutationResponse,
   type ResponsePacket,
 } from "./types";
 export {

@@ -112,24 +112,51 @@ pub fn add_amount(root: &mut Value, path: &[String], amount: f64) -> Result<(), 
     set_nested(root, path, Value::from(updated))
 }
 
-fn existing_array(root: &Value, path: &[String]) -> Result<Vec<Value>, AppError> {
-    match get_nested(root, path).cloned() {
-        None => Ok(Vec::new()),
-        Some(Value::Array(items)) => Ok(items),
-        Some(_) => Err(AppError::validation("target value is not an array")),
+fn not_an_array() -> AppError {
+    AppError::validation("target value is not an array")
+}
+
+/// Returns the array addressed by `path`, creating it (and any missing
+/// intermediate objects, with the same coercion rules as `set_nested`)
+/// when it does not exist yet. Validation happens before any modification,
+/// so a rejected call leaves the document untouched.
+fn array_slot<'a>(root: &'a mut Value, path: &[String]) -> Result<&'a mut Vec<Value>, AppError> {
+    let Some((last, parents)) = path.split_last() else {
+        return match root {
+            Value::Array(items) => Ok(items),
+            _ => Err(not_an_array()),
+        };
+    };
+    match get_nested(root, path) {
+        Some(Value::Array(_)) | None => {}
+        Some(_) => return Err(not_an_array()),
+    }
+    let mut current = root;
+    for segment in parents {
+        current = object_mut(current)?
+            .entry(segment.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+    }
+    let map = current
+        .as_object_mut()
+        .ok_or_else(|| AppError::validation("cannot set nested value on non-object"))?;
+    match map
+        .entry(last.clone())
+        .or_insert_with(|| Value::Array(Vec::new()))
+    {
+        Value::Array(items) => Ok(items),
+        _ => Err(not_an_array()),
     }
 }
 
 pub fn push_element(root: &mut Value, path: &[String], element: Value) -> Result<(), AppError> {
-    let mut items = existing_array(root, path)?;
-    items.push(element);
-    set_nested(root, path, Value::Array(items))
+    array_slot(root, path)?.push(element);
+    Ok(())
 }
 
 pub fn pull_element(root: &mut Value, path: &[String], element: &Value) -> Result<(), AppError> {
-    let items = existing_array(root, path)?;
-    let remaining: Vec<Value> = items.into_iter().filter(|item| item != element).collect();
-    set_nested(root, path, Value::Array(remaining))
+    array_slot(root, path)?.retain(|item| item != element);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -276,6 +303,33 @@ mod tests {
         let mut scalar = json!(3);
         assert!(push_element(&mut scalar, &["list".to_owned()], json!(1)).is_err());
         assert!(pull_element(&mut scalar, &["list".to_owned()], &json!(1)).is_err());
+        assert_eq!(scalar, json!(3));
+
+        let mut top = json!([]);
+        push_element(&mut top, &[], json!("a")).unwrap();
+        assert_eq!(top, json!(["a"]));
+        let mut null_root = Value::Null;
+        assert!(push_element(&mut null_root, &[], json!(1)).is_err());
+
+        // A scalar leaf is rejected before anything is modified.
+        let mut leaf = json!({"list": 5});
+        assert!(push_element(&mut leaf, &["list".to_owned()], json!(1)).is_err());
+        assert_eq!(leaf, json!({"list": 5}));
+
+        // A scalar intermediate is coerced like `set_nested` does.
+        let mut deep = json!({"a": 5});
+        push_element(
+            &mut deep,
+            &["a".to_owned(), "b".to_owned(), "list".to_owned()],
+            json!(1),
+        )
+        .unwrap();
+        assert_eq!(deep, json!({"a": {"b": {"list": [1]}}}));
+
+        // Pulling from a missing path creates the empty array (server quirk).
+        let mut missing = json!({});
+        pull_element(&mut missing, &["list".to_owned()], &json!(1)).unwrap();
+        assert_eq!(missing, json!({"list": []}));
     }
 
     #[test]

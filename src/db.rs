@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry as MapSlot},
     hash::{DefaultHasher, Hash, Hasher},
     sync::{
         Arc,
@@ -26,6 +26,17 @@ const MAX_LIST_ROWS: i64 = 10_000;
 /// Shards for the per-key write locks. Same-key writers serialize on one
 /// shard; different keys rarely collide (collision only costs a short queue).
 const MUTEX_SHARDS: usize = 256;
+/// Upper bound of rows per `INSERT ... UNNEST` statement during a flush.
+const FLUSH_ROWS_PER_STATEMENT: usize = 500;
+/// Soft upper bound of payload bytes per `INSERT` statement during a flush.
+const FLUSH_BYTES_PER_STATEMENT: usize = 32 * 1024 * 1024;
+/// Upper bound of ids per `DELETE ... = ANY` statement during a flush.
+const FLUSH_DELETES_PER_STATEMENT: usize = 5_000;
+/// Documents serialized/parsed between two cooperative yields, so that a
+/// large flush or table scan cannot monopolize a runtime worker.
+const YIELD_EVERY: usize = 32;
+/// JSON payloads at or above this size are parsed on the blocking pool.
+const BLOCKING_PARSE_THRESHOLD: usize = 256 * 1024;
 
 #[derive(Debug)]
 struct MemEntry {
@@ -40,32 +51,151 @@ impl MemEntry {
     }
 }
 
+/// One stored document. Readers take the inner read lock and copy only the
+/// part they need; writers mutate the document in place under the inner
+/// write lock. The outer store lock is never held while waiting for an
+/// inner lock and an inner lock is never held while taking the outer one.
+type Entry = Arc<RwLock<MemEntry>>;
+type Store = HashMap<String, HashMap<String, Entry>>;
+/// Per-key locks for in-progress `PostgreSQL` loads (single-flight).
+type LoadLocks = HashMap<(String, String), Arc<Mutex<()>>>;
+
+/// What a mutation does to the TTL of the entry it touches.
+#[derive(Clone, Copy, Debug)]
+pub enum Expiry {
+    /// The entry becomes permanent (regular writes).
+    Clear,
+    /// The entry expires at the given instant (`cache` operation).
+    Set(Instant),
+}
+
+fn new_entry(value: Value, expires_at: Option<Instant>) -> Entry {
+    Arc::new(RwLock::new(MemEntry { value, expires_at }))
+}
+
 /// Tracks which writes still need to be pushed to `PostgreSQL`.
+///
+/// Every mark carries the generation it was made in. A flush snapshots the
+/// current generation, bumps it, and afterwards only forgets marks that are
+/// not newer than the snapshot, so a write that lands while a flush is in
+/// progress stays dirty for the next cycle instead of being lost.
 #[derive(Debug, Default)]
 struct DirtyTracker {
+    generation: u64,
     /// Keys written since the last flush (upsert on flush).
-    upserts: HashSet<(String, String)>,
+    upserts: HashMap<(String, String), u64>,
     /// Keys deleted since the last flush (delete on flush).
-    deletes: HashSet<(String, String)>,
+    deletes: HashMap<(String, String), u64>,
     /// Tables fully cleared since the last flush (wipe on flush).
-    cleared: HashSet<String>,
+    cleared: HashMap<String, u64>,
 }
 
 impl DirtyTracker {
     fn mark_upsert(&mut self, table: &str, key: &str) {
-        self.upserts.insert((table.to_owned(), key.to_owned()));
-        self.deletes.remove(&(table.to_owned(), key.to_owned()));
+        let tuple = (table.to_owned(), key.to_owned());
+        self.deletes.remove(&tuple);
+        self.upserts.insert(tuple, self.generation);
     }
 
     fn mark_delete(&mut self, table: &str, key: &str) {
-        self.deletes.insert((table.to_owned(), key.to_owned()));
-        self.upserts.remove(&(table.to_owned(), key.to_owned()));
+        let tuple = (table.to_owned(), key.to_owned());
+        self.upserts.remove(&tuple);
+        self.deletes.insert(tuple, self.generation);
     }
 
     fn clear_table(&mut self, table: &str) {
-        self.cleared.insert(table.to_owned());
-        self.upserts.retain(|(t, _)| t != table);
-        self.deletes.retain(|(t, _)| t != table);
+        self.upserts.retain(|(t, _), _| t != table);
+        self.deletes.retain(|(t, _), _| t != table);
+        self.cleared.insert(table.to_owned(), self.generation);
+    }
+
+    fn is_logically_absent(&self, table: &str, key: &str) -> bool {
+        self.cleared.contains_key(table)
+            || self
+                .deletes
+                .contains_key(&(table.to_owned(), key.to_owned()))
+    }
+
+    /// Snapshot of everything dirty right now. Bumps the generation so
+    /// later marks are distinguishable from the ones being flushed.
+    fn snapshot(&mut self) -> DirtySnapshot {
+        let generation = self.generation;
+        self.generation += 1;
+        DirtySnapshot {
+            generation,
+            cleared: self.cleared.keys().cloned().collect(),
+            upserts: self.upserts.keys().cloned().collect(),
+            deletes: self.deletes.keys().cloned().collect(),
+        }
+    }
+
+    /// Forgets the marks covered by `snapshot`, keeping anything newer.
+    #[cfg(test)]
+    fn forget(&mut self, snapshot: &DirtySnapshot) {
+        self.forget_cleared(snapshot.cleared.iter(), snapshot.generation);
+        self.forget_upserts(snapshot.upserts.iter(), snapshot.generation);
+        self.forget_deletes(snapshot.deletes.iter(), snapshot.generation);
+    }
+
+    /// Forgets the cleared-table marks that were flushed at `generation`.
+    fn forget_cleared<'a>(&mut self, tables: impl Iterator<Item = &'a String>, generation: u64) {
+        for table in tables {
+            if self
+                .cleared
+                .get(table)
+                .is_some_and(|marked| *marked <= generation)
+            {
+                self.cleared.remove(table);
+            }
+        }
+    }
+
+    /// Forgets the upsert marks that were flushed at `generation`.
+    fn forget_upserts<'a>(
+        &mut self,
+        keys: impl Iterator<Item = &'a (String, String)>,
+        generation: u64,
+    ) {
+        for key in keys {
+            if self
+                .upserts
+                .get(key)
+                .is_some_and(|marked| *marked <= generation)
+            {
+                self.upserts.remove(key);
+            }
+        }
+    }
+
+    /// Forgets the delete marks that were flushed at `generation`.
+    fn forget_deletes<'a>(
+        &mut self,
+        keys: impl Iterator<Item = &'a (String, String)>,
+        generation: u64,
+    ) {
+        for key in keys {
+            if self
+                .deletes
+                .get(key)
+                .is_some_and(|marked| *marked <= generation)
+            {
+                self.deletes.remove(key);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DirtySnapshot {
+    generation: u64,
+    cleared: HashSet<String>,
+    upserts: HashSet<(String, String)>,
+    deletes: HashSet<(String, String)>,
+}
+
+impl DirtySnapshot {
+    fn is_empty(&self) -> bool {
+        self.cleared.is_empty() && self.upserts.is_empty() && self.deletes.is_empty()
     }
 }
 
@@ -75,11 +205,14 @@ pub struct Repository {
     ensured_tables: Arc<RwLock<HashSet<String>>>,
     /// Write-behind store: table -> key -> entry. Writes land here first and
     /// are batch-flushed to `PostgreSQL` every `flush_interval`.
-    memory: Arc<RwLock<HashMap<String, HashMap<String, MemEntry>>>>,
+    memory: Arc<RwLock<Store>>,
     dirty: Arc<Mutex<DirtyTracker>>,
     flush_interval: Duration,
     flush_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     write_locks: Arc<[Mutex<()>; MUTEX_SHARDS]>,
+    /// Keys currently being loaded from `PostgreSQL`; concurrent misses on
+    /// the same key share one SELECT + parse instead of each doing their own.
+    loading: Arc<Mutex<LoadLocks>>,
     memory_hits: Arc<AtomicU64>,
     memory_misses: Arc<AtomicU64>,
 }
@@ -104,34 +237,55 @@ impl Repository {
             .await?;
         sqlx::query("SELECT 1").execute(&pool).await?;
 
-        let repository = Self {
-            pool,
-            ensured_tables: Arc::new(RwLock::new(HashSet::new())),
-            memory: Arc::new(RwLock::new(HashMap::new())),
-            dirty: Arc::new(Mutex::new(DirtyTracker::default())),
-            flush_interval: Duration::from_secs(config.flush_interval_secs),
-            flush_task: Arc::new(Mutex::new(None)),
-            write_locks: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
-            memory_hits: Arc::new(AtomicU64::new(0)),
-            memory_misses: Arc::new(AtomicU64::new(0)),
-        };
+        let repository = Self::with_pool(pool, Duration::from_secs(config.flush_interval_secs));
         let flush_interval = repository.flush_interval;
         let task = tokio::spawn(repository.clone().flush_loop(flush_interval));
         *repository.flush_task.lock().await = Some(task);
         Ok(repository)
     }
 
-    pub async fn get(&self, table: &str, key: &str) -> Result<Option<Value>, AppError> {
-        self.ensure_table(table).await?;
-        tracing::trace!(table, key, "repository.get");
-        self.read_inner(table, key).await
+    fn with_pool(pool: PgPool, flush_interval: Duration) -> Self {
+        Self {
+            pool,
+            ensured_tables: Arc::new(RwLock::new(HashSet::new())),
+            memory: Arc::new(RwLock::new(HashMap::new())),
+            dirty: Arc::new(Mutex::new(DirtyTracker::default())),
+            flush_interval,
+            flush_task: Arc::new(Mutex::new(None)),
+            write_locks: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
+            loading: Arc::new(Mutex::new(HashMap::new())),
+            memory_hits: Arc::new(AtomicU64::new(0)),
+            memory_misses: Arc::new(AtomicU64::new(0)),
+        }
     }
 
-    pub async fn set(&self, table: &str, key: &str, value: &Value) -> Result<(), AppError> {
+    /// Runs `read` against the stored document and returns its result. Only
+    /// what the closure copies out leaves the store: a nested `get` on a
+    /// multi-megabyte document costs a few hundred nanoseconds, not a deep
+    /// clone of the whole document.
+    pub async fn read<R>(
+        &self,
+        table: &str,
+        key: &str,
+        read: impl FnOnce(&Value) -> R,
+    ) -> Result<Option<R>, AppError> {
+        self.ensure_table(table).await?;
+        tracing::trace!(table, key, "repository.read");
+        let Some(entry) = self.load(table, key).await? else {
+            return Ok(None);
+        };
+        let guard = entry.read().await;
+        if guard.is_expired() {
+            return Ok(None);
+        }
+        Ok(Some(read(&guard.value)))
+    }
+
+    pub async fn set(&self, table: &str, key: &str, value: Value) -> Result<(), AppError> {
         self.ensure_table(table).await?;
         tracing::trace!(table, key, "repository.set");
         let _guard = self.write_locks[mutate_shard(table, key)].lock().await;
-        self.write_memory(table, key, value.clone(), None).await;
+        self.store(table, key, value, None).await;
         self.mark_upsert(table, key).await;
         Ok(())
     }
@@ -140,25 +294,47 @@ impl Repository {
         &self,
         table: &str,
         key: &str,
-        value: &Value,
+        value: Value,
         ttl: Duration,
     ) -> Result<(), AppError> {
         self.ensure_table(table).await?;
         tracing::trace!(table, key, ttl = ?ttl, "repository.set_with_ttl");
         let _guard = self.write_locks[mutate_shard(table, key)].lock().await;
-        self.write_memory(table, key, value.clone(), Some(Instant::now() + ttl))
+        self.store(table, key, value, Some(Instant::now() + ttl))
             .await;
         self.mark_upsert(table, key).await;
         Ok(())
     }
 
-    pub async fn delete(&self, table: &str, key: &str) -> Result<(), AppError> {
+    /// Deletes a whole entry; returns whether it existed (in memory or in
+    /// `PostgreSQL`) before the call.
+    pub async fn delete(&self, table: &str, key: &str) -> Result<bool, AppError> {
         self.ensure_table(table).await?;
         tracing::trace!(table, key, "repository.delete");
         let _guard = self.write_locks[mutate_shard(table, key)].lock().await;
-        self.remove_memory(table, key).await;
+        let existed = match self.remove_memory(table, key).await {
+            Some(entry) => !entry.read().await.is_expired(),
+            None => self.exists_in_postgres(table, key).await?,
+        };
         self.mark_delete(table, key).await;
-        Ok(())
+        Ok(existed)
+    }
+
+    /// Deletes the entry only if it carries an elapsed TTL. Used by the
+    /// timer spawned for `cache` so that a value stored permanently after
+    /// the `cache` call is not wiped when the old TTL fires.
+    pub async fn delete_if_expired(&self, table: &str, key: &str) -> Result<bool, AppError> {
+        self.ensure_table(table).await?;
+        let _guard = self.write_locks[mutate_shard(table, key)].lock().await;
+        let Some(entry) = self.lookup(table, key).await else {
+            return Ok(false);
+        };
+        if !entry.read().await.is_expired() {
+            return Ok(false);
+        }
+        self.remove_if_same(table, key, &entry).await;
+        self.mark_delete(table, key).await;
+        Ok(true)
     }
 
     pub async fn list_all(&self, table: &str) -> Result<Vec<(String, Value)>, AppError> {
@@ -167,9 +343,9 @@ impl Repository {
 
         let mut merged: HashMap<String, Value> = HashMap::new();
 
-        // Do not hold the memory lock during the (potentially slow) table scan:
-        // fetch the "cleared" flag, run the query, then merge memory afterwards.
-        let cleared = self.dirty.lock().await.cleared.contains(table);
+        // Do not hold any store lock during the (potentially slow) table
+        // scan: fetch the "cleared" flag, run the query, then merge memory.
+        let cleared = self.dirty.lock().await.cleared.contains_key(table);
 
         if !cleared {
             let select = format!(r#"SELECT id, value FROM "{table}" ORDER BY id LIMIT $1"#);
@@ -177,45 +353,55 @@ impl Repository {
                 .bind(MAX_LIST_ROWS)
                 .fetch_all(&self.pool)
                 .await?;
+            let mut raw_rows: Vec<(String, String)> = Vec::with_capacity(rows.len());
             for row in rows {
-                let id: String = row.try_get("id")?;
-                let raw: String = row.try_get("value")?;
-                let value: Value = serde_json::from_str(&raw)?;
+                raw_rows.push((row.try_get("id")?, row.try_get("value")?));
+            }
+            for (id, value) in parse_rows(raw_rows).await? {
                 merged.insert(id, value);
             }
         }
 
         let (upserts, deletes) = {
             let dirty = self.dirty.lock().await;
-            let upserts: HashSet<(String, String)> = dirty
+            let upserts: Vec<String> = dirty
                 .upserts
-                .iter()
+                .keys()
                 .filter(|(t, _)| t == table)
-                .cloned()
+                .map(|(_, key)| key.clone())
                 .collect();
-            let deletes: HashSet<(String, String)> = dirty
+            let deletes: Vec<String> = dirty
                 .deletes
-                .iter()
+                .keys()
                 .filter(|(t, _)| t == table)
-                .cloned()
+                .map(|(_, key)| key.clone())
                 .collect();
             (upserts, deletes)
         };
-        for (_, key) in &deletes {
+        for key in &deletes {
             merged.remove(key);
         }
 
-        {
+        // Grab the entries under the store lock, read them outside of it.
+        let entries: Vec<(String, Entry)> = {
             let tables = self.memory.read().await;
-            if let Some(entries) = tables.get(table) {
-                for (key, entry) in entries {
-                    if entry.is_expired() {
-                        continue;
-                    }
-                    if upserts.contains(&(table.to_owned(), key.clone())) {
-                        merged.insert(key.clone(), entry.value.clone());
-                    }
+            match tables.get(table) {
+                Some(rows) => upserts
+                    .into_iter()
+                    .filter_map(|key| rows.get(&key).map(|entry| (key, Arc::clone(entry))))
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
+        for (index, (key, entry)) in entries.into_iter().enumerate() {
+            {
+                let guard = entry.read().await;
+                if !guard.is_expired() {
+                    merged.insert(key, guard.value.clone());
                 }
+            }
+            if index % YIELD_EVERY == YIELD_EVERY - 1 {
+                tokio::task::yield_now().await;
             }
         }
 
@@ -233,87 +419,134 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn mutate<F>(
+    /// Read-modify-write of one document, in place. `transform` receives
+    /// the stored document (or `absent` when there is none) and returns
+    /// `Some(result)` to keep the document, `None` to delete it. The per-key
+    /// lock makes the whole operation atomic against every other write on
+    /// the same key.
+    ///
+    /// On error the document is left untouched: every mutation in
+    /// `values` validates its target before it modifies anything.
+    pub async fn mutate<R>(
         &self,
         table: &str,
         key: &str,
         absent: Value,
-        transform: F,
-    ) -> Result<Value, AppError>
-    where
-        F: Fn(Value) -> Result<Option<Value>, AppError>,
-    {
+        expiry: Expiry,
+        transform: impl FnOnce(&mut Value) -> Result<Option<R>, AppError>,
+    ) -> Result<Option<R>, AppError> {
         assert_key_fits(key)?;
         self.ensure_table(table).await?;
         tracing::trace!(table, key, "repository.mutate");
 
-        // The per-key lock makes the read-modify-write atomic against every
-        // other write on the same key. PostgreSQL is only touched by the
-        // periodic batch flush, so no row locks or CAS retries are needed.
+        // Warm the document before taking the shard lock: a cold load (pool
+        // wait + transfer + parse) must not stall the other keys hashed to
+        // the same shard. The lookup under the lock below is then a hit.
+        self.load(table, key).await?;
         let _guard = self.write_locks[mutate_shard(table, key)].lock().await;
-        let current = self.read_inner(table, key).await?.unwrap_or(absent);
-        if let Some(updated) = transform(current)? {
-            self.write_memory(table, key, updated.clone(), None).await;
+        // A missing document is edited on a detached entry that only becomes
+        // visible once the transform succeeded, so a failed `add`/`push` on
+        // an unknown key never leaves an empty placeholder behind.
+        let (entry, detached) = match self.load(table, key).await? {
+            Some(entry) => (entry, false),
+            None => (new_entry(absent.clone(), None), true),
+        };
+        let outcome = {
+            let mut inner = entry.write().await;
+            if inner.is_expired() {
+                inner.value = absent;
+                inner.expires_at = None;
+            }
+            let outcome = transform(&mut inner.value)?;
+            if outcome.is_some() {
+                inner.expires_at = match expiry {
+                    Expiry::Clear => None,
+                    Expiry::Set(at) => Some(at),
+                };
+            }
+            outcome
+        };
+        if let Some(result) = outcome {
+            if detached || !self.is_attached(table, key, &entry).await {
+                self.attach(table, key, entry).await;
+            }
             self.mark_upsert(table, key).await;
-            Ok(updated)
+            Ok(Some(result))
         } else {
-            self.remove_memory(table, key).await;
+            if !detached {
+                self.remove_if_same(table, key, &entry).await;
+            }
             self.mark_delete(table, key).await;
-            Ok(Value::Null)
+            Ok(None)
         }
     }
 
     /// Removes expired TTL entries; returns how many were purged.
     pub async fn purge_expired(&self) -> usize {
-        let expired: Vec<(String, String)> = {
-            let mut tables = self.memory.write().await;
-            let mut expired = Vec::new();
-            for (table, entries) in tables.iter_mut() {
-                entries.retain(|key, entry| {
-                    if entry.is_expired() {
-                        expired.push((table.clone(), key.clone()));
-                        false
-                    } else {
-                        true
-                    }
-                });
-            }
-            tables.retain(|_, entries| !entries.is_empty());
-            expired
+        let candidates: Vec<(String, String, Entry)> = {
+            let tables = self.memory.read().await;
+            tables
+                .iter()
+                .flat_map(|(table, entries)| {
+                    entries
+                        .iter()
+                        .map(|(key, entry)| (table.clone(), key.clone(), Arc::clone(entry)))
+                })
+                .collect()
         };
-        for (table, key) in &expired {
-            self.mark_delete(table, key).await;
+
+        let mut purged = 0;
+        for (table, key, entry) in candidates {
+            if !entry.read().await.is_expired() {
+                continue;
+            }
+            // Same lock as every writer: no mutation can revive the entry
+            // between the expiry check and its removal.
+            let _guard = self.write_locks[mutate_shard(&table, &key)].lock().await;
+            if !entry.read().await.is_expired() {
+                continue;
+            }
+            if self.remove_if_same(&table, &key, &entry).await {
+                self.mark_delete(&table, &key).await;
+                purged += 1;
+            }
         }
-        expired.len()
+        if purged > 0 {
+            self.memory
+                .write()
+                .await
+                .retain(|_, entries| !entries.is_empty());
+        }
+        purged
     }
 
     /// Batch-pushes all buffered writes to `PostgreSQL`. Safe to call
-    /// concurrently: entries written during the flush stay dirty for the next
-    /// cycle, and on failure everything is retried on the next cycle.
+    /// concurrently with writes: entries written during the flush stay dirty
+    /// for the next cycle. Every statement that succeeded is forgotten right
+    /// away, so a failing statement only leaves its own rows (and everything
+    /// after it) for the next cycle instead of retrying the whole batch.
     pub async fn flush(&self) -> Result<(), AppError> {
-        let (cleared, upserts, deletes) = {
-            let dirty = self.dirty.lock().await;
-            (
-                dirty.cleared.iter().cloned().collect::<HashSet<_>>(),
-                dirty.upserts.iter().cloned().collect::<HashSet<_>>(),
-                dirty.deletes.iter().cloned().collect::<HashSet<_>>(),
-            )
-        };
-        if cleared.is_empty() && upserts.is_empty() && deletes.is_empty() {
+        let snapshot = self.dirty.lock().await.snapshot();
+        if snapshot.is_empty() {
             return Ok(());
         }
         let started = Instant::now();
+        let generation = snapshot.generation;
 
         // 1) Fully cleared tables first.
-        for table in &cleared {
+        for table in &snapshot.cleared {
             let delete = format!(r#"DELETE FROM "{table}""#);
             sqlx::query(&delete).execute(&self.pool).await?;
+            self.dirty
+                .lock()
+                .await
+                .forget_cleared(std::iter::once(table), generation);
         }
 
         // 2) Key deletions, batched per table.
         let mut deletes_by_table: HashMap<String, Vec<String>> = HashMap::new();
-        for (table, key) in &deletes {
-            if cleared.contains(table) {
+        for (table, key) in &snapshot.deletes {
+            if snapshot.cleared.contains(table) {
                 continue;
             }
             deletes_by_table
@@ -323,57 +556,93 @@ impl Repository {
         }
         for (table, keys) in &deletes_by_table {
             let delete = format!(r#"DELETE FROM "{table}" WHERE id = ANY($1::text[])"#);
-            sqlx::query(&delete).bind(keys).execute(&self.pool).await?;
+            for chunk in keys.chunks(FLUSH_DELETES_PER_STATEMENT) {
+                sqlx::query(&delete).bind(chunk).execute(&self.pool).await?;
+                let flushed: Vec<(String, String)> = chunk
+                    .iter()
+                    .map(|key| (table.clone(), key.clone()))
+                    .collect();
+                self.dirty
+                    .lock()
+                    .await
+                    .forget_deletes(flushed.iter(), generation);
+            }
+        }
+        // Deletes of tables that were cleared are covered by the wipe above.
+        {
+            let covered: Vec<&(String, String)> = snapshot
+                .deletes
+                .iter()
+                .filter(|(table, _)| snapshot.cleared.contains(table))
+                .collect();
+            self.dirty
+                .lock()
+                .await
+                .forget_deletes(covered.into_iter(), generation);
         }
 
-        // 3) Upserts: read the freshest in-memory value for each dirty key.
+        // 3) Upserts: serialize the freshest in-memory value of each dirty key.
         let mut upserts_by_table: HashMap<String, Vec<(String, String)>> = HashMap::new();
-        for (table, key) in &upserts {
-            let value = {
-                let tables = self.memory.read().await;
-                tables
-                    .get(table)
-                    .and_then(|entries| entries.get(key))
-                    .filter(|entry| !entry.is_expired())
-                    .map(|entry| entry.value.clone())
+        for (index, (table, key)) in snapshot.upserts.iter().enumerate() {
+            let payload = match self.lookup(table, key).await {
+                Some(entry) => {
+                    let guard = entry.read().await;
+                    if guard.is_expired() {
+                        None
+                    } else {
+                        Some(serde_json::to_string(&guard.value)?)
+                    }
+                }
+                None => None,
             };
-            let Some(value) = value else {
+            let Some(payload) = payload else {
                 // Deleted, expired, or purged before the flush landed; make
                 // sure the stale row (if any) is removed from `PostgreSQL`.
                 self.mark_delete(table, key).await;
                 continue;
             };
-            let payload = serde_json::to_string(&value)?;
             upserts_by_table
                 .entry(table.clone())
                 .or_default()
                 .push((key.clone(), payload));
+            if index % YIELD_EVERY == YIELD_EVERY - 1 {
+                tokio::task::yield_now().await;
+            }
         }
+        let mut statements = 0usize;
         for (table, rows) in &upserts_by_table {
             self.ensure_table(table).await?;
-            let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
-            let payloads: Vec<String> = rows.iter().map(|(_, payload)| payload.clone()).collect();
             let insert = format!(
                 r#"INSERT INTO "{table}" (id, value) SELECT * FROM UNNEST($1::text[], $2::text[]) ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value"#
             );
-            sqlx::query(&insert)
-                .bind(&ids)
-                .bind(&payloads)
-                .execute(&self.pool)
-                .await?;
+            for chunk in chunk_rows(rows) {
+                let ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
+                let payloads: Vec<&str> =
+                    chunk.iter().map(|(_, payload)| payload.as_str()).collect();
+                sqlx::query(&insert)
+                    .bind(&ids)
+                    .bind(&payloads)
+                    .execute(&self.pool)
+                    .await?;
+                statements += 1;
+                // Only forget what was actually flushed; writes that landed
+                // meanwhile carry a newer generation and stay dirty.
+                let flushed: Vec<(String, String)> = chunk
+                    .iter()
+                    .map(|(id, _)| (table.clone(), id.clone()))
+                    .collect();
+                self.dirty
+                    .lock()
+                    .await
+                    .forget_upserts(flushed.iter(), generation);
+            }
         }
 
-        // Only drop what we actually flushed; writes that landed meanwhile
-        // stay dirty for the next cycle.
-        let mut dirty = self.dirty.lock().await;
-        dirty.cleared.retain(|table| !cleared.contains(table));
-        dirty.upserts.retain(|key| !upserts.contains(key));
-        dirty.deletes.retain(|key| !deletes.contains(key));
-
         tracing::info!(
-            cleared = cleared.len(),
-            deletes = deletes.len(),
-            upserts = upserts.len(),
+            cleared = snapshot.cleared.len(),
+            deletes = snapshot.deletes.len(),
+            upserts = snapshot.upserts.len(),
+            statements,
             elapsed = ?started.elapsed(),
             "repository flush complete"
         );
@@ -410,92 +679,162 @@ impl Repository {
         }
     }
 
-    /// Reads a key from memory, falling back to `PostgreSQL` for keys that were
-    /// never touched since startup. Expired TTL entries are treated as absent
-    /// (`PostgreSQL` may still hold them until the next flush deletes them).
-    async fn read_inner(&self, table: &str, key: &str) -> Result<Option<Value>, AppError> {
-        // Fast path: serve from memory with a shared (read) lock. Reads must
-        // not be serialized behind each other nor behind `list_all`'s scan.
-        {
-            let tables = self.memory.read().await;
-            if let Some(entry) = tables.get(table).and_then(|entries| entries.get(key)) {
-                if !entry.is_expired() {
-                    self.memory_hits.fetch_add(1, Ordering::Relaxed);
-                    return Ok(Some(entry.value.clone()));
-                }
-            }
+    /// Finds the entry for a key, loading it from `PostgreSQL` into memory
+    /// when it was never touched since startup. Returns expired entries as
+    /// well: readers treat them as absent, writers reset them.
+    async fn load(&self, table: &str, key: &str) -> Result<Option<Entry>, AppError> {
+        if let Some(entry) = self.lookup(table, key).await {
+            self.memory_hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(Some(entry));
         }
         self.memory_misses.fetch_add(1, Ordering::Relaxed);
-
-        // Expired TTL entry: drop it under a write lock, then treat as absent.
-        let mut expired = false;
-        {
-            let mut tables = self.memory.write().await;
-            if let Some(entries) = tables.get_mut(table) {
-                if let Some(entry) = entries.get(key) {
-                    if entry.is_expired() {
-                        entries.remove(key);
-                        expired = true;
-                    }
-                }
-            }
-        }
-        if expired {
-            self.mark_delete(table, key).await;
-            return Ok(None);
-        }
 
         // The key may be logically absent: deleted or expired since the last
         // flush, or its table was cleared. `PostgreSQL` may still hold the
         // old row until the next flush deletes it, so it must not be
         // resurrected here.
-        let key_tuple = (table.to_owned(), key.to_owned());
-        {
-            let dirty = self.dirty.lock().await;
-            if dirty.deletes.contains(&key_tuple) || dirty.cleared.contains(table) {
-                return Ok(None);
-            }
+        if self.dirty.lock().await.is_logically_absent(table, key) {
+            return Ok(None);
         }
 
+        // Single-flight: whoever holds the per-key load lock does the round
+        // trip, everyone else waits for it and then finds the entry in memory.
+        let tuple = (table.to_owned(), key.to_owned());
+        let load_lock = Arc::clone(
+            self.loading
+                .lock()
+                .await
+                .entry(tuple.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        );
+        let result = {
+            let _loading = load_lock.lock().await;
+            match self.lookup(table, key).await {
+                Some(entry) => Ok(Some(entry)),
+                None => self.load_from_postgres(table, key).await,
+            }
+        };
+        {
+            let mut loading = self.loading.lock().await;
+            if loading
+                .get(&tuple)
+                .is_some_and(|current| Arc::ptr_eq(current, &load_lock))
+                && Arc::strong_count(&load_lock) == 2
+            {
+                loading.remove(&tuple);
+            }
+        }
+        result
+    }
+
+    async fn load_from_postgres(&self, table: &str, key: &str) -> Result<Option<Entry>, AppError> {
         let select = format!(r#"SELECT value FROM "{table}" WHERE id = $1"#);
         let row = sqlx::query(&select)
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
-        let Some(value) = row.as_ref().map(parse_row_value).transpose()? else {
+        let Some(raw) = row
+            .as_ref()
+            .map(|row| row.try_get::<String, _>("value"))
+            .transpose()?
+        else {
             return Ok(None);
         };
+        let value = parse_json(raw).await?;
 
         // The key may have been written to memory while we were reading
-        // PostgreSQL; the fresher in-memory value wins.
+        // PostgreSQL; the entry that is already there wins.
         let mut tables = self.memory.write().await;
         let entries = tables.entry(table.to_owned()).or_default();
-        let current = entries.entry(key.to_owned()).or_insert_with(|| MemEntry {
-            value: value.clone(),
-            expires_at: None,
-        });
-        Ok(Some(current.value.clone()))
+        let entry = entries
+            .entry(key.to_owned())
+            .or_insert_with(|| new_entry(value, None));
+        Ok(Some(Arc::clone(entry)))
     }
 
-    async fn write_memory(
-        &self,
-        table: &str,
-        key: &str,
-        value: Value,
-        expires_at: Option<Instant>,
-    ) {
+    async fn lookup(&self, table: &str, key: &str) -> Option<Entry> {
+        let tables = self.memory.read().await;
+        tables
+            .get(table)
+            .and_then(|entries| entries.get(key))
+            .map(Arc::clone)
+    }
+
+    async fn is_attached(&self, table: &str, key: &str, entry: &Entry) -> bool {
+        let tables = self.memory.read().await;
+        tables
+            .get(table)
+            .and_then(|entries| entries.get(key))
+            .is_some_and(|current| Arc::ptr_eq(current, entry))
+    }
+
+    async fn attach(&self, table: &str, key: &str, entry: Entry) {
         let mut tables = self.memory.write().await;
         tables
             .entry(table.to_owned())
             .or_default()
-            .insert(key.to_owned(), MemEntry { value, expires_at });
+            .insert(key.to_owned(), entry);
     }
 
-    async fn remove_memory(&self, table: &str, key: &str) {
-        let mut tables = self.memory.write().await;
-        if let Some(entries) = tables.get_mut(table) {
-            entries.remove(key);
+    /// Replaces the value of a key (creating the entry when needed) without
+    /// swapping the entry out from under concurrent readers.
+    async fn store(&self, table: &str, key: &str, value: Value, expires_at: Option<Instant>) {
+        let mut pending = Some(value);
+        let existing = {
+            let mut tables = self.memory.write().await;
+            let entries = tables.entry(table.to_owned()).or_default();
+            match entries.entry(key.to_owned()) {
+                MapSlot::Occupied(slot) => Some(Arc::clone(slot.get())),
+                MapSlot::Vacant(slot) => {
+                    if let Some(value) = pending.take() {
+                        slot.insert(new_entry(value, expires_at));
+                    }
+                    None
+                }
+            }
+        };
+        if let (Some(entry), Some(value)) = (existing, pending) {
+            let mut inner = entry.write().await;
+            inner.value = value;
+            inner.expires_at = expires_at;
         }
+    }
+
+    async fn remove_memory(&self, table: &str, key: &str) -> Option<Entry> {
+        let mut tables = self.memory.write().await;
+        tables
+            .get_mut(table)
+            .and_then(|entries| entries.remove(key))
+    }
+
+    /// Removes the key only if it still maps to `entry`; returns whether it
+    /// was removed.
+    async fn remove_if_same(&self, table: &str, key: &str, entry: &Entry) -> bool {
+        let mut tables = self.memory.write().await;
+        let Some(entries) = tables.get_mut(table) else {
+            return false;
+        };
+        if entries
+            .get(key)
+            .is_some_and(|current| Arc::ptr_eq(current, entry))
+        {
+            entries.remove(key);
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn exists_in_postgres(&self, table: &str, key: &str) -> Result<bool, AppError> {
+        if self.dirty.lock().await.is_logically_absent(table, key) {
+            return Ok(false);
+        }
+        let select = format!(r#"SELECT 1 FROM "{table}" WHERE id = $1"#);
+        Ok(sqlx::query(&select)
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?
+            .is_some())
     }
 
     async fn mark_upsert(&self, table: &str, key: &str) {
@@ -514,10 +853,9 @@ impl Repository {
                 return Ok(());
             }
         }
-        let mut ensured = self.ensured_tables.write().await;
-        if ensured.contains(table) {
-            return Ok(());
-        }
+        // The DDL is idempotent, so it runs without holding the write lock:
+        // every other request would otherwise queue behind this round trip
+        // (tokio's RwLock is write-preferring) each time a table is first seen.
         let create = format!(
             r#"CREATE TABLE IF NOT EXISTS "{table}" (id VARCHAR(255) PRIMARY KEY, value TEXT)"#
         );
@@ -537,9 +875,58 @@ impl Repository {
                 }
             }
         }
-        ensured.insert(table.to_owned());
+        self.ensured_tables.write().await.insert(table.to_owned());
         Ok(())
     }
+}
+
+/// Parses one JSON payload, moving large ones off the async workers.
+async fn parse_json(raw: String) -> Result<Value, AppError> {
+    if raw.len() < BLOCKING_PARSE_THRESHOLD {
+        return Ok(serde_json::from_str(&raw)?);
+    }
+    tokio::task::spawn_blocking(move || serde_json::from_str::<Value>(&raw))
+        .await
+        .map_err(|error| AppError::internal(format!("json parse task failed: {error}")))?
+        .map_err(AppError::from)
+}
+
+/// Parses a batch of rows on the blocking pool (table scans can be large).
+async fn parse_rows(rows: Vec<(String, String)>) -> Result<Vec<(String, Value)>, AppError> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    tokio::task::spawn_blocking(move || {
+        rows.into_iter()
+            .map(|(id, raw)| serde_json::from_str::<Value>(&raw).map(|value| (id, value)))
+            .collect::<Result<Vec<_>, _>>()
+    })
+    .await
+    .map_err(|error| AppError::internal(format!("json parse task failed: {error}")))?
+    .map_err(AppError::from)
+}
+
+/// Splits flush rows into statements bounded by row count and payload size.
+fn chunk_rows(rows: &[(String, String)]) -> Vec<&[(String, String)]> {
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    let mut bytes = 0usize;
+    for (index, (_, payload)) in rows.iter().enumerate() {
+        let count = index - start;
+        if count > 0
+            && (count >= FLUSH_ROWS_PER_STATEMENT
+                || bytes + payload.len() > FLUSH_BYTES_PER_STATEMENT)
+        {
+            chunks.push(&rows[start..index]);
+            start = index;
+            bytes = 0;
+        }
+        bytes += payload.len();
+    }
+    if start < rows.len() {
+        chunks.push(&rows[start..]);
+    }
+    chunks
 }
 
 fn assert_key_fits(key: &str) -> Result<(), AppError> {
@@ -559,15 +946,32 @@ fn mutate_shard(table: &str, key: &str) -> usize {
     usize::try_from(hasher.finish() % MUTEX_SHARDS as u64).unwrap_or(0)
 }
 
-fn parse_row_value(row: &sqlx::postgres::PgRow) -> Result<Value, AppError> {
-    let raw: String = row.try_get("value")?;
-    Ok(serde_json::from_str(&raw)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A repository whose pool never connects: only the in-memory paths are
+    /// exercised. The table is pre-marked as ensured and as cleared, so
+    /// unknown keys count as logically absent instead of being looked up.
+    fn memory_only() -> Repository {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
+            .expect("lazy pool");
+        let repository = Repository::with_pool(pool, Duration::from_mins(5));
+        repository
+            .ensured_tables
+            .try_write()
+            .expect("unlocked")
+            .insert("t".to_owned());
+        repository
+            .dirty
+            .try_lock()
+            .expect("unlocked")
+            .clear_table("t");
+        repository
+    }
 
     #[test]
     fn tracker_tracks_upserts_deletes_and_table_clears() {
@@ -575,21 +979,78 @@ mod tests {
 
         tracker.mark_upsert("t", "a");
         tracker.mark_upsert("t", "b");
-        assert!(tracker.upserts.contains(&("t".to_owned(), "a".to_owned())));
+        assert!(
+            tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
 
         tracker.mark_delete("t", "a");
-        assert!(!tracker.upserts.contains(&("t".to_owned(), "a".to_owned())));
-        assert!(tracker.deletes.contains(&("t".to_owned(), "a".to_owned())));
-        assert!(tracker.upserts.contains(&("t".to_owned(), "b".to_owned())));
+        assert!(
+            !tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
+        assert!(
+            tracker
+                .deletes
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
+        assert!(
+            tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "b".to_owned()))
+        );
 
         tracker.mark_upsert("t", "a");
-        assert!(!tracker.deletes.contains(&("t".to_owned(), "a".to_owned())));
-        assert!(tracker.upserts.contains(&("t".to_owned(), "a".to_owned())));
+        assert!(
+            !tracker
+                .deletes
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
+        assert!(
+            tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
 
         tracker.clear_table("t");
-        assert!(tracker.cleared.contains("t"));
+        assert!(tracker.cleared.contains_key("t"));
         assert!(tracker.upserts.is_empty());
         assert!(tracker.deletes.is_empty());
+    }
+
+    #[test]
+    fn tracker_keeps_marks_made_during_a_flush() {
+        let mut tracker = DirtyTracker::default();
+        tracker.mark_upsert("t", "a");
+        tracker.mark_delete("t", "b");
+
+        let snapshot = tracker.snapshot();
+        // Writes that land while the snapshot is being flushed.
+        tracker.mark_upsert("t", "a");
+        tracker.mark_upsert("t", "c");
+
+        tracker.forget(&snapshot);
+        assert!(
+            tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "a".to_owned()))
+        );
+        assert!(
+            tracker
+                .upserts
+                .contains_key(&("t".to_owned(), "c".to_owned()))
+        );
+        assert!(
+            !tracker
+                .deletes
+                .contains_key(&("t".to_owned(), "b".to_owned()))
+        );
+
+        let second = tracker.snapshot();
+        tracker.forget(&second);
+        assert!(tracker.upserts.is_empty());
     }
 
     #[test]
@@ -611,5 +1072,205 @@ mod tests {
             expires_at: None,
         };
         assert!(!never.is_expired());
+    }
+
+    #[test]
+    fn chunk_rows_bounds_rows_and_bytes() {
+        let rows: Vec<(String, String)> = (0..1_250)
+            .map(|index| (index.to_string(), "x".repeat(10)))
+            .collect();
+        let chunks = chunk_rows(&rows);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), FLUSH_ROWS_PER_STATEMENT);
+        assert_eq!(chunks[2].len(), 250);
+
+        let big: Vec<(String, String)> = (0..3)
+            .map(|index| (index.to_string(), "x".repeat(FLUSH_BYTES_PER_STATEMENT)))
+            .collect();
+        assert_eq!(chunk_rows(&big).len(), 3);
+        assert!(chunk_rows(&[]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_copies_only_the_requested_part() {
+        let repository = memory_only();
+        repository
+            .set(
+                "t",
+                "guild",
+                json!({"GUILD": {"LANG": {"lang": "fr"}}, "STATS": {}}),
+            )
+            .await
+            .unwrap();
+
+        let lang = repository
+            .read("t", "guild", |doc| doc["GUILD"]["LANG"]["lang"].clone())
+            .await
+            .unwrap();
+        assert_eq!(lang, Some(json!("fr")));
+        assert_eq!(
+            repository.read("t", "missing", Value::clone).await.unwrap(),
+            None
+        );
+        // Reads of unknown keys never leave placeholders behind.
+        assert!(repository.lookup("t", "missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn mutate_edits_in_place_and_deletes_when_asked() {
+        let repository = memory_only();
+        let pushed = repository
+            .mutate("t", "doc", json!([]), Expiry::Clear, |doc| {
+                crate::values::push_element(doc, &[], json!(1))?;
+                Ok(Some(doc.clone()))
+            })
+            .await
+            .unwrap();
+        assert_eq!(pushed, Some(json!([1])));
+        assert_eq!(
+            repository.read("t", "doc", Value::clone).await.unwrap(),
+            Some(json!([1]))
+        );
+
+        let gone: Option<()> = repository
+            .mutate("t", "doc", json!([]), Expiry::Clear, |_| Ok(None))
+            .await
+            .unwrap();
+        assert!(gone.is_none());
+        assert!(repository.lookup("t", "doc").await.is_none());
+        assert!(
+            repository
+                .dirty
+                .lock()
+                .await
+                .deletes
+                .contains_key(&("t".to_owned(), "doc".to_owned()))
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_mutation_on_unknown_key_leaves_nothing_behind() {
+        let repository = memory_only();
+        let result: Result<Option<()>, AppError> = repository
+            .mutate("t", "doc", json!({}), Expiry::Clear, |_| {
+                Err(AppError::validation("boom"))
+            })
+            .await;
+        assert!(result.is_err());
+        assert!(repository.lookup("t", "doc").await.is_none());
+        assert!(repository.dirty.lock().await.upserts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_mutations_on_one_key_never_lose_updates() {
+        let repository = memory_only();
+        let mut tasks = Vec::new();
+        for _ in 0..200 {
+            let repository = repository.clone();
+            tasks.push(tokio::spawn(async move {
+                repository
+                    .mutate("t", "counter", json!({}), Expiry::Clear, |doc| {
+                        crate::values::add_amount(doc, &["n".to_owned()], 1.0)?;
+                        Ok(Some(()))
+                    })
+                    .await
+                    .unwrap();
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        let total = repository
+            .read("t", "counter", |doc| doc["n"].as_f64())
+            .await
+            .unwrap()
+            .flatten();
+        assert_eq!(total, Some(200.0));
+    }
+
+    #[tokio::test]
+    async fn expired_entries_read_as_absent_and_are_purged() {
+        let repository = memory_only();
+        repository
+            .set_with_ttl("t", "tmp", json!({"a": 1}), Duration::from_millis(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.read("t", "tmp", Value::clone).await.unwrap(),
+            Some(json!({"a": 1}))
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            repository.read("t", "tmp", Value::clone).await.unwrap(),
+            None
+        );
+        assert!(!repository.delete_if_expired("t", "unknown").await.unwrap());
+        assert_eq!(repository.purge_expired().await, 1);
+        assert!(repository.lookup("t", "tmp").await.is_none());
+        assert!(
+            repository
+                .dirty
+                .lock()
+                .await
+                .deletes
+                .contains_key(&("t".to_owned(), "tmp".to_owned()))
+        );
+        // Deleting a key that is only known as deleted does not touch the pool.
+        assert!(!repository.delete("t", "tmp").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn ttl_timer_does_not_wipe_a_value_stored_permanently_afterwards() {
+        let repository = memory_only();
+        repository
+            .set_with_ttl("t", "k", json!("temporary"), Duration::from_millis(10))
+            .await
+            .unwrap();
+        repository.set("t", "k", json!("permanent")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!repository.delete_if_expired("t", "k").await.unwrap());
+        assert_eq!(
+            repository.read("t", "k", Value::clone).await.unwrap(),
+            Some(json!("permanent"))
+        );
+    }
+
+    #[tokio::test]
+    async fn mutate_resets_expired_documents_to_absent() {
+        let repository = memory_only();
+        repository
+            .set_with_ttl("t", "k", json!({"old": true}), Duration::from_millis(10))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        repository
+            .mutate("t", "k", json!({}), Expiry::Clear, |doc| {
+                crate::values::set_nested(doc, &["fresh".to_owned()], json!(1))?;
+                Ok(Some(()))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.read("t", "k", Value::clone).await.unwrap(),
+            Some(json!({"fresh": 1}))
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_reports_existence_from_memory() {
+        let repository = memory_only();
+        repository.set("t", "k", json!(1)).await.unwrap();
+        assert!(repository.delete("t", "k").await.unwrap());
+        assert!(!repository.delete("t", "k").await.unwrap());
+        assert_eq!(repository.read("t", "k", Value::clone).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn clear_table_hides_every_key_without_touching_the_pool() {
+        let repository = memory_only();
+        repository.set("t", "k", json!(1)).await.unwrap();
+        repository.clear_table("t").await.unwrap();
+        assert_eq!(repository.read("t", "k", Value::clone).await.unwrap(), None);
+        assert!(!repository.delete("t", "k").await.unwrap());
     }
 }

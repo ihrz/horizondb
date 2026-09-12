@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::{
+    db::Expiry,
     error::AppError,
     models::{PacketMessage, ResponseMessage},
     state::AppState,
@@ -60,16 +61,16 @@ async fn route(state: &AppState, packet: PacketMessage) -> Result<Value, AppErro
             }
             match operation {
                 "get" => get_value(state, &packet).await,
-                "set" => set_value(state, &packet).await,
+                "set" => set_value(state, packet).await,
                 "delete" => delete_key(state, &packet).await,
                 "add" => adjust_amount(state, &packet, 1.0).await,
                 "sub" => adjust_amount(state, &packet, -1.0).await,
-                "push" => push_element(state, &packet).await,
+                "push" => push_element(state, packet).await,
                 "pull" => pull_element(state, &packet).await,
                 "has" => has_key(state, &packet).await,
                 "all" => list_all(state, &packet).await,
                 "deleteAll" => delete_all(state, &packet).await,
-                "cache" => cache_with_ttl(state, &packet).await,
+                "cache" => cache_with_ttl(state, packet).await,
                 unknown => Err(AppError::validation(format!(
                     "Unknown operation: {unknown}"
                 ))),
@@ -92,11 +93,24 @@ fn scope(packet: &PacketMessage) -> Result<(&str, String, Vec<String>), AppError
     Ok((table_of(packet), base, path))
 }
 
+fn wants_value(packet: &PacketMessage) -> bool {
+    packet.return_value.unwrap_or(false)
+}
+
 async fn login(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
-    if state
-        .authenticator
-        .verify(packet.login.as_deref(), packet.password.as_deref())
-    {
+    // Password verification (argon2id in production) is CPU-bound: run it on
+    // the blocking pool so a burst of logins after a reconnect cannot stall
+    // the async workers that serve every other request.
+    let authenticator = state.authenticator.clone();
+    let username = packet.login.clone();
+    let password = packet.password.clone();
+    let verified = tokio::task::spawn_blocking(move || {
+        authenticator.verify(username.as_deref(), password.as_deref())
+    })
+    .await
+    .map_err(|error| AppError::internal(format!("login task failed: {error}")))?;
+
+    if verified {
         let session_id = state.sessions.create().await;
         Ok(json!({ "success": true, "sessionId": session_id }))
     } else {
@@ -111,36 +125,39 @@ async fn logout(state: &AppState, packet: &PacketMessage) -> Result<Value, AppEr
 
 async fn get_value(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let (table, base, path) = scope(packet)?;
-    let default_value = packet.default_value.clone();
+    let default_value = packet.default_value.as_ref();
 
-    match state.repository.get(table, &base).await? {
-        Some(value) => Ok(project(&value, &path, default_value)),
-        None => Ok(default_value.unwrap_or(Value::Null)),
-    }
+    let found = state
+        .repository
+        .read(table, &base, |doc| project(doc, &path, default_value))
+        .await?;
+    Ok(found.unwrap_or_else(|| default_value.cloned().unwrap_or(Value::Null)))
 }
 
-fn project(value: &Value, path: &[String], default: Option<Value>) -> Value {
+/// Copies the part of `value` addressed by `path` (the whole value for an
+/// empty path), falling back to `default` when the path does not resolve.
+fn project(value: &Value, path: &[String], default: Option<&Value>) -> Value {
     if path.is_empty() {
         return value.clone();
     }
     match values::get_nested(value, path) {
         Some(found) => found.clone(),
-        None => default.unwrap_or(Value::Null),
+        None => default.cloned().unwrap_or(Value::Null),
     }
 }
 
-async fn set_value(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
-    let (table, base, path) = scope(packet)?;
+async fn set_value(state: &AppState, packet: PacketMessage) -> Result<Value, AppError> {
+    let (table, base, path) = scope(&packet)?;
     let value = packet.value.clone().unwrap_or(Value::Null);
 
     if path.is_empty() {
-        state.repository.set(table, &base, &value).await?;
+        state.repository.set(table, &base, value).await?;
     } else {
         state
             .repository
-            .mutate(table, &base, json!({}), |mut doc| {
-                values::set_nested(&mut doc, &path, value.clone())?;
-                Ok(Some(doc))
+            .mutate(table, &base, json!({}), Expiry::Clear, |doc| {
+                values::set_nested(doc, &path, value)?;
+                Ok(Some(()))
             })
             .await?;
     }
@@ -164,72 +181,96 @@ async fn adjust_amount(
         json!({})
     };
 
-    state
+    let updated = state
         .repository
-        .mutate(table, &base, absent, |mut doc| {
-            values::add_amount(&mut doc, &path, delta)?;
-            Ok(Some(doc))
+        .mutate(table, &base, absent, Expiry::Clear, |doc| {
+            values::add_amount(doc, &path, delta)?;
+            Ok(Some(project(doc, &path, None)))
         })
         .await?;
-    Ok(json!({ "success": true }))
+    Ok(json!({ "success": true, "value": updated.unwrap_or(Value::Null) }))
 }
 
 async fn delete_key(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let (table, base, path) = scope(packet)?;
 
-    if path.is_empty() {
-        state.repository.delete(table, &base).await?;
+    let existed = if path.is_empty() {
+        state.repository.delete(table, &base).await?
     } else {
+        let mut removed = false;
         state
             .repository
-            .mutate(table, &base, json!({}), |mut doc| {
-                values::delete_nested(&mut doc, &path);
+            .mutate(table, &base, json!({}), Expiry::Clear, |doc| {
+                removed = values::delete_nested(doc, &path);
                 if doc.as_object().is_some_and(serde_json::Map::is_empty) {
                     Ok(None)
                 } else {
-                    Ok(Some(doc))
+                    Ok(Some(()))
                 }
             })
             .await?;
-    }
-    Ok(json!({ "success": true }))
+        removed
+    };
+    Ok(json!({ "success": true, "existed": existed }))
 }
 
-async fn push_element(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
-    let (table, base, path) = scope(packet)?;
-    let element = packet.element.clone().unwrap_or(Value::Null);
+/// A missing document starts as an empty array for a top-level `push`/`pull`
+/// and as an empty object when the array lives under a nested path (the
+/// first `push` of `guild.STATS.USER.<id>.messages` must not fail because
+/// the guild document does not exist yet).
+fn array_absent(path: &[String]) -> Value {
+    if path.is_empty() {
+        json!([])
+    } else {
+        json!({})
+    }
+}
 
-    state
+async fn push_element(state: &AppState, packet: PacketMessage) -> Result<Value, AppError> {
+    let (table, base, path) = scope(&packet)?;
+    let element = packet.element.clone().unwrap_or(Value::Null);
+    let wants_value = wants_value(&packet);
+
+    let updated = state
         .repository
-        .mutate(table, &base, json!([]), |mut doc| {
-            values::push_element(&mut doc, &path, element.clone())?;
-            Ok(Some(doc))
+        .mutate(table, &base, array_absent(&path), Expiry::Clear, |doc| {
+            values::push_element(doc, &path, element)?;
+            Ok(Some(wants_value.then(|| project(doc, &path, None))))
         })
         .await?;
-    Ok(json!({ "success": true }))
+    Ok(mutation_response(updated.flatten()))
 }
 
 async fn pull_element(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let (table, base, path) = scope(packet)?;
     let element = packet.element.clone().unwrap_or(Value::Null);
+    let wants_value = wants_value(packet);
 
-    state
+    let updated = state
         .repository
-        .mutate(table, &base, json!([]), |mut doc| {
-            values::pull_element(&mut doc, &path, &element)?;
-            Ok(Some(doc))
+        .mutate(table, &base, array_absent(&path), Expiry::Clear, |doc| {
+            values::pull_element(doc, &path, &element)?;
+            Ok(Some(wants_value.then(|| project(doc, &path, None))))
         })
         .await?;
-    Ok(json!({ "success": true }))
+    Ok(mutation_response(updated.flatten()))
+}
+
+fn mutation_response(value: Option<Value>) -> Value {
+    match value {
+        Some(value) => json!({ "success": true, "value": value }),
+        None => json!({ "success": true }),
+    }
 }
 
 async fn has_key(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
     let (table, base, path) = scope(packet)?;
 
-    let exists = match state.repository.get(table, &base).await? {
-        Some(value) => path_exists(&value, &path),
-        None => false,
-    };
+    let exists = state
+        .repository
+        .read(table, &base, |doc| path_exists(doc, &path))
+        .await?
+        .unwrap_or(false);
     Ok(json!(exists))
 }
 
@@ -254,31 +295,28 @@ async fn delete_all(state: &AppState, packet: &PacketMessage) -> Result<Value, A
     Ok(json!({ "success": true }))
 }
 
-async fn cache_with_ttl(state: &AppState, packet: &PacketMessage) -> Result<Value, AppError> {
-    let (table, base, path) = scope(packet)?;
+async fn cache_with_ttl(state: &AppState, packet: PacketMessage) -> Result<Value, AppError> {
+    let (table, base, path) = scope(&packet)?;
     let ttl_ms = packet.time.unwrap_or(DEFAULT_TTL_MS);
     if ttl_ms == 0 || ttl_ms > MAX_TTL_MS {
         return Err(AppError::validation("ttl must be between 1ms and 30 days"));
     }
     let value = packet.value.clone().unwrap_or(Value::Null);
     let ttl = Duration::from_millis(ttl_ms);
+    let expires_at = Instant::now() + ttl;
 
     if path.is_empty() {
         state
             .repository
-            .set_with_ttl(table, &base, &value, ttl)
+            .set_with_ttl(table, &base, value, ttl)
             .await?;
     } else {
-        let root = state
-            .repository
-            .mutate(table, &base, json!({}), |mut doc| {
-                values::set_nested(&mut doc, &path, value.clone())?;
-                Ok(Some(doc))
-            })
-            .await?;
         state
             .repository
-            .set_with_ttl(table, &base, &root, ttl)
+            .mutate(table, &base, json!({}), Expiry::Set(expires_at), |doc| {
+                values::set_nested(doc, &path, value)?;
+                Ok(Some(()))
+            })
             .await?;
     }
 
@@ -286,9 +324,54 @@ async fn cache_with_ttl(state: &AppState, packet: &PacketMessage) -> Result<Valu
     let cleanup_table = table.to_owned();
     tokio::spawn(async move {
         tokio::time::sleep(ttl).await;
-        if let Err(error) = repository.delete(&cleanup_table, &base).await {
+        if let Err(error) = repository.delete_if_expired(&cleanup_table, &base).await {
             tracing::debug!(%error, "ttl cleanup failed");
         }
     });
     Ok(json!({ "success": true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_copies_subtree_or_default() {
+        let doc = json!({"a": {"b": [1, 2]}, "n": null});
+        assert_eq!(project(&doc, &[], None), doc);
+        assert_eq!(
+            project(&doc, &["a".to_owned(), "b".to_owned()], None),
+            json!([1, 2])
+        );
+        assert_eq!(project(&doc, &["zzz".to_owned()], None), Value::Null);
+        assert_eq!(
+            project(&doc, &["zzz".to_owned()], Some(&json!(7))),
+            json!(7)
+        );
+    }
+
+    #[test]
+    fn path_exists_treats_null_as_absent() {
+        let doc = json!({"a": {"b": 1}, "n": null});
+        assert!(path_exists(&doc, &[]));
+        assert!(path_exists(&doc, &["a".to_owned(), "b".to_owned()]));
+        assert!(!path_exists(&doc, &["n".to_owned()]));
+        assert!(!path_exists(&doc, &["missing".to_owned()]));
+        assert!(!path_exists(&Value::Null, &[]));
+    }
+
+    #[test]
+    fn array_absent_matches_path_shape() {
+        assert_eq!(array_absent(&[]), json!([]));
+        assert_eq!(array_absent(&["items".to_owned()]), json!({}));
+    }
+
+    #[test]
+    fn mutation_response_only_carries_requested_values() {
+        assert_eq!(mutation_response(None), json!({"success": true}));
+        assert_eq!(
+            mutation_response(Some(json!([1]))),
+            json!({"success": true, "value": [1]})
+        );
+    }
 }

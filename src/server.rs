@@ -1,7 +1,14 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{
+    SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     signal,
@@ -9,7 +16,7 @@ use tokio::{
     time::interval,
 };
 use tokio_tungstenite::{
-    accept_async_with_config,
+    WebSocketStream, accept_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
@@ -22,6 +29,18 @@ use crate::{
 const SESSION_PURGE_INTERVAL: Duration = Duration::from_mins(5);
 const MEMORY_PURGE_INTERVAL: Duration = Duration::from_mins(1);
 const STATS_INTERVAL: Duration = Duration::from_mins(1);
+/// Requests a single connection may have in flight. Beyond that the socket
+/// is simply not read until responses drain, which turns into TCP
+/// backpressure for the client instead of unbounded task growth here.
+const MAX_IN_FLIGHT_PER_CONNECTION: usize = 1_024;
+/// Deadline applied to requests that do not carry their own `timeoutMs`:
+/// work the client has certainly abandoned is not worth doing.
+const DEFAULT_REQUEST_DEADLINE: Duration = Duration::from_secs(10);
+/// A Ping is sent when nothing was received for this long...
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// ...and the connection is dropped when it stays silent for this long, so a
+/// half-open link releases its connection permit instead of holding it forever.
+const IDLE_TIMEOUT: Duration = Duration::from_mins(2);
 
 pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
     let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
@@ -51,7 +70,9 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
                         let _permit = permit;
                         let connection_state = Arc::clone(&task_state);
                         if let Err(error) = serve_connection(connection_state, stream, peer).await {
-                            tracing::debug!(%peer, %error, "connection ended");
+                            // A dropped link takes every in-flight request of
+                            // that client with it: make it visible in production.
+                            tracing::warn!(%peer, %error, "connection ended with error");
                         }
                         task_state.metrics.connection_closed();
                     });
@@ -99,15 +120,58 @@ async fn serve_connection(
     // request: a slow `all` must never block unrelated `get`s on this link.
     let (sink, mut stream) = websocket.split();
     let sink = Arc::new(Mutex::new(sink));
+    let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT_PER_CONNECTION));
 
-    while let Some(message) = stream.next().await {
+    let outcome = read_loop(&state, &mut stream, &sink, &in_flight, peer).await;
+
+    // The read half is done (client Close frame, oversized message, broken
+    // link). Spawned responses may still hold the sink for a while; without
+    // an explicit close the client would keep the socket open and time out
+    // every request it sends meanwhile instead of reconnecting right away.
+    if let Err(error) = sink.lock().await.close().await {
+        tracing::debug!(%peer, %error, "close frame not sent");
+    }
+    outcome
+}
+
+async fn read_loop(
+    state: &Arc<AppState>,
+    stream: &mut SplitStream<WebSocketStream<TcpStream>>,
+    sink: &Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, Message>>>,
+    in_flight: &Arc<Semaphore>,
+    peer: SocketAddr,
+) -> anyhow::Result<()> {
+    let mut last_received = Instant::now();
+    loop {
+        let message = match tokio::time::timeout(PING_INTERVAL, stream.next()).await {
+            Ok(Some(message)) => message,
+            Ok(None) => break,
+            Err(_elapsed) => {
+                if last_received.elapsed() >= IDLE_TIMEOUT {
+                    return Err(anyhow::anyhow!(
+                        "idle timeout: nothing received from {peer} for {:?}",
+                        last_received.elapsed()
+                    ));
+                }
+                if let Err(error) = sink.lock().await.send(Message::Ping(Vec::new())).await {
+                    return Err(anyhow::anyhow!("ping to {peer} failed: {error}"));
+                }
+                continue;
+            }
+        };
+        last_received = Instant::now();
         match message {
             Ok(Message::Text(text)) => {
-                let state = Arc::clone(&state);
-                let sink = Arc::clone(&sink);
+                let received_at = Instant::now();
+                let Ok(slot) = Arc::clone(in_flight).acquire_owned().await else {
+                    break;
+                };
+                let state = Arc::clone(state);
+                let sink = Arc::clone(sink);
                 tokio::spawn(async move {
+                    let _slot = slot;
                     let response = match serde_json::from_str::<PacketMessage>(&text) {
-                        Ok(packet) => dispatch(&state, packet).await,
+                        Ok(packet) => handle_packet(&state, packet, received_at).await,
                         Err(error) => ResponseMessage::failure(
                             "unknown".to_owned(),
                             format!("Invalid JSON: {error}"),
@@ -124,10 +188,36 @@ async fn serve_connection(
                 break;
             }
             Ok(_) => {}
-            Err(error) => return Err(anyhow::anyhow!("websocket error from {peer}: {error}")),
+            Err(error) => {
+                // Typical causes: a frame/message above server.max_message_size
+                // (tungstenite "Capacity" error) or a broken TCP link.
+                return Err(anyhow::anyhow!("websocket error from {peer}: {error}"));
+            }
         }
     }
     Ok(())
+}
+
+/// Skips requests that already waited longer than their client-side timeout
+/// (queued behind the in-flight cap): the answer would be discarded anyway,
+/// and executing it would only delay requests the client still waits for.
+async fn handle_packet(
+    state: &AppState,
+    packet: PacketMessage,
+    received_at: Instant,
+) -> ResponseMessage {
+    let deadline = packet
+        .timeout_ms
+        .filter(|ms| *ms > 0)
+        .map_or(DEFAULT_REQUEST_DEADLINE, Duration::from_millis);
+    let waited = received_at.elapsed();
+    if waited >= deadline {
+        state.metrics.request_started();
+        state.metrics.request_failed();
+        tracing::warn!(id = %packet.id, operation = %packet.operation, ?waited, "request dropped: deadline exceeded before dispatch");
+        return ResponseMessage::failure(packet.id, "deadline exceeded");
+    }
+    dispatch(state, packet).await
 }
 
 async fn shutdown_signal() {

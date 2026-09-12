@@ -5,9 +5,11 @@ use serde::Deserialize;
 use crate::error::AppError;
 
 const DEFAULT_SERVER_MAX_CONNECTIONS: usize = 1024;
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
-const MAX_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
-const DEFAULT_POOL_MAX_CONNECTIONS: u32 = 10;
+/// A message above this size drops the whole client connection (and every
+/// request in flight on it), so the default leaves room for large documents.
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const MAX_MESSAGE_SIZE_LIMIT: usize = 256 * 1024 * 1024;
+const DEFAULT_POOL_MAX_CONNECTIONS: u32 = 32;
 const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_LIFETIME_SECS: u64 = 1800;
@@ -152,7 +154,7 @@ impl AppConfig {
         }
         if !(1024..=MAX_MESSAGE_SIZE_LIMIT).contains(&self.server.max_message_size) {
             return Err(AppError::Config(
-                "server.max_message_size must be between 1 KiB and 64 MiB".to_owned(),
+                "server.max_message_size must be between 1 KiB and 256 MiB".to_owned(),
             ));
         }
         if self.database.min_connections > self.database.max_connections {

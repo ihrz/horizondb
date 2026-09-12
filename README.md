@@ -31,7 +31,18 @@ Operations: `login`, `logout`, `get`, `set`, `delete`, `add`, `sub`, `push`,
 `pull`, `has`, `all`, `deleteAll`, `cache`.
 
 Keys are dot-nested (`user.profile.name`) and merge into one row per base key.
-See `WHAT.md` for the full semantics.
+Mutations report their result so clients do not need a follow-up read:
+`add`/`sub` answer `{ "success": true, "value": <new number> }`, `delete`
+answers `{ "success": true, "existed": <bool> }`, and `push`/`pull` answer
+with the resulting array under `value` when the request carries
+`"returnValue": true`. See `WHAT.md` for the full semantics.
+
+Sizing for production: `server.max_message_size` must be larger than your
+largest document (a bigger message drops that client connection and every
+request in flight on it), and `database.max_connections` should follow the
+number of clients doing cold reads at startup. Requests may carry
+`"timeoutMs"`; the server drops a request that already waited longer than
+that before it could be handled (`"error": "deadline exceeded"`).
 
 ## TypeScript client
 

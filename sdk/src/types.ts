@@ -35,6 +35,17 @@ export interface Packet {
   password?: string;
   defaultValue?: Json;
   time?: number;
+  returnValue?: boolean;
+  timeoutMs?: number;
+}
+
+/** Shape of the `data` field answered by mutating operations. */
+export interface MutationResponse {
+  success: boolean;
+  /** `add`/`sub`: the new number; `push`/`pull` with `returnValue`: the array. */
+  value?: Json;
+  /** `delete`: whether the key existed before the call. */
+  existed?: boolean;
 }
 
 export type ResponsePacket = {

@@ -7,8 +7,8 @@ interface PendingEntry {
 }
 
 export class ConnectionClosedError extends Error {
-  constructor() {
-    super("connection closed");
+  constructor(message = "connection closed") {
+    super(message);
     this.name = "ConnectionClosedError";
   }
 }
@@ -24,6 +24,8 @@ type SocketLike = {
   readonly readyState: number;
   send(data: string): void;
   close(): void;
+  /** Bun extension: drops the TCP connection without a close handshake. */
+  terminate?(): void;
   addEventListener(type: "open", listener: () => void): void;
   addEventListener(type: "error", listener: () => void): void;
   addEventListener(type: "close", listener: () => void): void;
@@ -48,9 +50,16 @@ export class HorizonDBAuthError extends Error {
 }
 
 export class HorizonDBTimeoutError extends Error {
-  constructor(operation: string) {
-    super(`request timed out: ${operation}`);
+  readonly operation: string;
+
+  constructor(operation: string, detail?: string) {
+    super(
+      detail
+        ? `request timed out: ${operation} (${detail})`
+        : `request timed out: ${operation}`,
+    );
     this.name = "HorizonDBTimeoutError";
+    this.operation = operation;
   }
 }
 
@@ -110,8 +119,14 @@ export class Connection {
   private sessionId: string | null = null;
   private sessionValid = false;
   private explicitlyClosed = false;
-  /** In-flight reconnect; requests wait for it instead of failing. */
+  /** In-flight reconnect (open + re-login); requests wait for it instead of failing. */
   private reconnectGate: Promise<void> | null = null;
+  /** In-flight login shared by every caller that needs (re-)authentication. */
+  private loginInFlight: Promise<void> | null = null;
+  /** Timestamp of the last frame received on the current socket. */
+  private lastMessageAt = 0;
+  /** How many times a socket was (re)opened; useful for diagnostics/tests. */
+  private openCount = 0;
 
   constructor(options: ConnectionOptions) {
     this.url = options.url;
@@ -134,6 +149,11 @@ export class Connection {
     return Connection.defaultSocket(this.url);
   }
 
+  /** Number of sockets opened so far (1 after the initial handshake). */
+  get connectionCount(): number {
+    return this.openCount;
+  }
+
   /**
    * Creates a fresh socket, wires the message/close handlers (before the open
    * handshake, so failed attempts also trigger the close path) and resolves
@@ -143,6 +163,8 @@ export class Connection {
     const socket = this.createSocket();
     this.socket = socket;
     socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) return;
+      this.lastMessageAt = Date.now();
       this.handleMessage(event.data);
     });
     socket.addEventListener("close", () => {
@@ -164,6 +186,8 @@ export class Connection {
       socket.addEventListener("open", onOpen);
       socket.addEventListener("error", onError);
     });
+    this.openCount += 1;
+    this.lastMessageAt = Date.now();
   }
 
   private open(): Promise<void> {
@@ -190,56 +214,93 @@ export class Connection {
 
   /**
    * Re-opens the socket with exponential backoff until it succeeds or the
-   * connection is explicitly closed. Re-authenticates once reconnected.
+   * connection is explicitly closed. Re-authenticates once reconnected; the
+   * gate only opens once the session is usable again, so waiting requests
+   * never race the login.
    */
   private async reconnectWithBackoff(): Promise<void> {
     let delay = RECONNECT_BASE_DELAY_MS;
     while (!this.explicitlyClosed) {
       await new Promise((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * 2, RECONNECT_MAX_DELAY_MS);
+      if (this.explicitlyClosed) return;
       try {
         await this.openSocket();
-        if (this.username !== undefined && this.password !== undefined) {
-          await this.login(this.username, this.password);
-        }
+      } catch {
+        continue; // Keep retrying with backoff.
+      }
+      if (this.username === undefined || this.password === undefined) return;
+      try {
+        await this.login(this.username, this.password);
         return;
       } catch {
-        // Keep retrying with backoff.
+        // The socket is open but unusable: close it before opening another
+        // one, otherwise every failed login would leak a server connection.
+        const opened = this.socket;
+        try {
+          opened.close();
+        } catch {
+          // Already gone.
+        }
       }
     }
   }
 
   /**
-   * Waits until the current socket is open. While a reconnect is in flight the
-   * reconnect gate is awaited; otherwise the socket's own open/close events
-   * drive the loop (a close means the close handler will schedule a reconnect
-   * that replaces the socket).
+   * Drops the current socket and starts the reconnect cycle. Used when the
+   * server stopped answering although the socket still looks open (stuck
+   * server, half-open TCP link): waiting for the OS to notice could take
+   * minutes, during which every request would just time out.
    */
-  private async waitUntilOpen(): Promise<void> {
+  private resetConnection(reason: string): void {
+    if (this.explicitlyClosed || this.reconnectGate) return;
+    const stale = this.socket;
+    this.rejectAllPending(new ConnectionClosedError(`connection reset: ${reason}`));
+    this.sessionId = null;
+    this.sessionValid = false;
+    this.scheduleReconnect();
+    try {
+      if (typeof stale.terminate === "function") stale.terminate();
+      else stale.close();
+    } catch {
+      // The socket may already be gone.
+    }
+  }
+
+  /**
+   * Waits until the connection can carry requests: no reconnect in flight,
+   * socket open, and any pending (re-)login finished. A close while waiting
+   * means the close handler will schedule a reconnect that replaces the
+   * socket, so the loop simply re-evaluates.
+   */
+  private async waitUntilReady(): Promise<void> {
     while (true) {
       if (this.explicitlyClosed) throw new ConnectionClosedError();
-      const socket = this.socket;
-      if (socket.readyState === SOCKET_OPEN) return;
       if (this.reconnectGate) {
         await this.reconnectGate.catch(() => {});
         continue;
       }
-      await new Promise<void>((resolve) => {
-        const onOpen = () => {
-          cleanup();
-          resolve();
-        };
-        const onClose = () => {
-          cleanup();
-          resolve();
-        };
-        const cleanup = () => {
-          socket.removeEventListener("open", onOpen);
-          socket.removeEventListener("close", onClose);
-        };
-        socket.addEventListener("open", onOpen);
-        socket.addEventListener("close", onClose);
-      });
+      const socket = this.socket;
+      if (socket.readyState !== SOCKET_OPEN) {
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            cleanup();
+            resolve();
+          };
+          const cleanup = () => {
+            socket.removeEventListener("open", done);
+            socket.removeEventListener("close", done);
+          };
+          socket.addEventListener("open", done);
+          socket.addEventListener("close", done);
+        });
+        continue;
+      }
+      if (this.loginInFlight) {
+        await this.loginInFlight.catch(() => {});
+        continue;
+      }
+      return;
     }
   }
 
@@ -270,7 +331,20 @@ export class Connection {
     this.sessionValid = false;
   }
 
-  async login(username: string, password: string): Promise<void> {
+  /**
+   * Authenticates on the current socket. Concurrent callers share one login
+   * round trip (one session), instead of each opening their own.
+   */
+  login(username: string, password: string): Promise<void> {
+    if (this.loginInFlight) return this.loginInFlight;
+    const attempt = this.performLogin(username, password).finally(() => {
+      if (this.loginInFlight === attempt) this.loginInFlight = null;
+    });
+    this.loginInFlight = attempt;
+    return attempt;
+  }
+
+  private async performLogin(username: string, password: string): Promise<void> {
     let data: { sessionId?: string } | undefined;
     try {
       data = await this.transmit<{ sessionId?: string }>("login", {
@@ -319,12 +393,12 @@ export class Connection {
     operation: string,
     fields: Record<string, unknown> = {},
   ): Promise<T> {
-    const wait = this.waitUntilOpen();
+    const wait = this.waitUntilReady();
     if (this.requestTimeoutMs > 0) {
       await withTimeout(
         wait,
         this.requestTimeoutMs,
-        new HorizonDBTimeoutError(operation),
+        new HorizonDBTimeoutError(operation, "connection not ready"),
       );
     } else {
       await wait;
@@ -352,6 +426,8 @@ export class Connection {
       operation,
       ...fields,
       ...(this.sessionValid ? { sessionId: this.sessionId } : {}),
+      // Lets the server skip work this client will have given up on.
+      ...(this.requestTimeoutMs > 0 ? { timeoutMs: this.requestTimeoutMs } : {}),
     };
     return new Promise<T>((resolve, reject) => {
       const useTimer = this.requestTimeoutMs > 0;
@@ -359,6 +435,7 @@ export class Connection {
         ? setTimeout(() => {
             this.pending.delete(id);
             reject(new HorizonDBTimeoutError(operation));
+            this.checkLiveness();
           }, this.requestTimeoutMs)
         : undefined;
       this.pending.set(id, {
@@ -368,6 +445,21 @@ export class Connection {
       });
       this.socket.send(JSON.stringify(packet));
     });
+  }
+
+  /**
+   * Called when a request timed out. If the socket delivered nothing at all
+   * during that whole window the server is not merely slow but unreachable
+   * on this link: force a reconnect instead of letting every following
+   * request time out as well.
+   */
+  private checkLiveness(): void {
+    if (this.explicitlyClosed || this.reconnectGate) return;
+    if (this.socket.readyState !== SOCKET_OPEN) return;
+    const silentFor = Date.now() - this.lastMessageAt;
+    if (silentFor >= this.requestTimeoutMs) {
+      this.resetConnection(`no response from server for ${silentFor} ms`);
+    }
   }
 
   close(): void {

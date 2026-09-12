@@ -17,6 +17,15 @@ pub struct PacketMessage {
     #[serde(rename = "defaultValue")]
     pub default_value: Option<Value>,
     pub time: Option<u64>,
+    /// `push`/`pull`: when true, the response carries the resulting array
+    /// under `value` (saves the follow-up `get` a client would issue).
+    #[serde(rename = "returnValue")]
+    pub return_value: Option<bool>,
+    /// Client-side timeout of this request in milliseconds. A request that
+    /// waited longer than this before being handled is answered with an
+    /// error instead of being executed for a caller that already gave up.
+    #[serde(rename = "timeoutMs")]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +75,12 @@ mod tests {
         assert_eq!(packet.id, "p1");
         assert_eq!(packet.session_id.as_deref(), Some("s"));
         assert_eq!(packet.default_value, Some(json!(42)));
+        assert_eq!(packet.return_value, None);
+
+        let raw = r#"{"id":"p2","operation":"push","key":"a","element":1,"returnValue":true,"timeoutMs":5000}"#;
+        let packet: PacketMessage = serde_json::from_str(raw).unwrap();
+        assert_eq!(packet.return_value, Some(true));
+        assert_eq!(packet.timeout_ms, Some(5000));
     }
 
     #[test]

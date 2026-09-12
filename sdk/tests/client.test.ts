@@ -206,6 +206,30 @@ describe("HorizonDB", () => {
     ).rejects.toThrow(/unknown operation/i);
   });
 
+  test("should report the new number from add and sub", async () => {
+    expect(await db.add("counter.hits", 5)).toBe(5);
+    expect(await db.add("counter.hits")).toBe(6);
+    expect(await db.sub("counter.hits", 2)).toBe(4);
+    expect(await db.sub("bare")).toBe(-1);
+  });
+
+  test("should return arrays from push and pull only when asked", async () => {
+    // Nested push on a document that does not exist yet creates the object.
+    expect(await db.push("list.items", 1)).toBeUndefined();
+    expect(await db.push("list.items", 2, { returnValue: true })).toEqual([1, 2]);
+    expect(await db.pull("list.items", 1)).toBeUndefined();
+    expect(await db.pull("list.items", 2, { returnValue: true })).toEqual([]);
+  });
+
+  test("should report whether a deleted key existed", async () => {
+    await db.set("user.name", "Alice");
+    expect(await db.delete("user.name")).toBe(true);
+    expect(await db.delete("user.name")).toBe(false);
+    expect(await db.delete("user")).toBe(false);
+    await db.set("user.age", 3);
+    expect(await db.delete("user")).toBe(true);
+  });
+
   test("should transparently re-login after logout when credentials are stored", async () => {
     await db.logout();
     expect(await db.get("anything")).toBeUndefined();
@@ -256,6 +280,91 @@ describe("HorizonDB connection handling", () => {
       silent.close();
     } finally {
       blackhole.stop(true);
+    }
+  });
+
+  test("should wait for the re-login before replaying requests after a restart", async () => {
+    const restartable = new MockHorizonServer({ ...CREDENTIALS, port: 0 });
+    const port = restartable.port;
+    const client = await HorizonDB.connect({
+      url: restartable.url,
+      ...CREDENTIALS,
+      requestTimeoutMs: 5_000,
+    });
+    try {
+      await client.set("before", 1);
+      expect(restartable.loginCount).toBe(1);
+
+      // Kill the server: every socket is dropped, the SDK starts reconnecting.
+      restartable.stop();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const replacement = new MockHorizonServer({ ...CREDENTIALS, port });
+      try {
+        // Requests issued while the link is down must wait for open + login
+        // and must not each trigger their own login.
+        const results = await Promise.all(
+          Array.from({ length: 8 }, (_, index) =>
+            client.set(`after.${index}`, index).then(() => client.get(`after.${index}`)),
+          ),
+        );
+        expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+        expect(replacement.loginCount).toBe(1);
+        expect(client.connectionCount).toBe(2);
+      } finally {
+        replacement.stop();
+      }
+    } finally {
+      client.close();
+    }
+  });
+
+  test("should reset a connection whose server went silent and recover", async () => {
+    const flaky = new MockHorizonServer(CREDENTIALS);
+    const client = await HorizonDB.connect({
+      url: flaky.url,
+      ...CREDENTIALS,
+      requestTimeoutMs: 150,
+    });
+    try {
+      await client.set("alive", true);
+      expect(flaky.openCount).toBe(1);
+
+      flaky.silent = true;
+      await expect(client.get("alive")).rejects.toThrow(HorizonDBTimeoutError);
+      // The timeout with a completely silent link forces a fresh socket
+      // (reconnect backoff starts at 250 ms, above this test's timeout).
+      flaky.silent = false;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(await client.get("alive")).toBe(true);
+      expect(flaky.openCount).toBe(2);
+      expect(client.connectionCount).toBe(2);
+    } finally {
+      client.close();
+      flaky.stop();
+    }
+  });
+
+  test("should not reset a slow but answering connection", async () => {
+    const slow = new MockHorizonServer(CREDENTIALS);
+    const client = await HorizonDB.connect({
+      url: slow.url,
+      ...CREDENTIALS,
+      requestTimeoutMs: 150,
+    });
+    try {
+      // One request is dropped while another one is answered within the
+      // window: the server is slow, not dead, so the socket must stay.
+      slow.silent = true;
+      const dropped = client.get("x");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      slow.silent = false;
+      await client.set("y", 1);
+      await expect(dropped).rejects.toThrow(HorizonDBTimeoutError);
+      expect(await client.get("y")).toBe(1);
+      expect(slow.openCount).toBe(1);
+    } finally {
+      client.close();
+      slow.stop();
     }
   });
 

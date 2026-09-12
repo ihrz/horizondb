@@ -12,7 +12,10 @@ WorkingDirectory=/home/ihrz/db
 ExecStart=/home/ihrz/db/target/release/horizondb /home/ihrz/db/config.toml
 Restart=on-failure
 RestartSec=2
-TimeoutStopSec=20
+# The final flush serializes every dirty document; give it time on busy
+# deployments instead of letting systemd SIGKILL it (writes since the last
+# flush would be lost).
+TimeoutStopSec=300
 
 # SIGTERM triggers a graceful shutdown that flushes pending writes to PostgreSQL.
 # Logging defaults to "info"; use RUST_LOG=debug|trace for more detail.
