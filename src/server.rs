@@ -13,7 +13,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
     signal,
     sync::{Mutex, Semaphore},
-    time::interval,
+    task::JoinSet,
+    time::{interval, timeout},
 };
 use tokio_tungstenite::{
     WebSocketStream, accept_async_with_config,
@@ -41,10 +42,20 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 /// ...and the connection is dropped when it stays silent for this long, so a
 /// half-open link releases its connection permit instead of holding it forever.
 const IDLE_TIMEOUT: Duration = Duration::from_mins(2);
+/// How long startup keeps retrying a busy port, covering the overlap with a
+/// previous instance that is still flushing its final writes to PostgreSQL.
+/// Must stay above `SHUTDOWN_TIMEOUT` so a restart always lands after the old
+/// process has fully exited.
+const BIND_RETRY_WINDOW: Duration = Duration::from_secs(15);
+const BIND_RETRY_DELAY: Duration = Duration::from_millis(500);
+/// Upper bound for the graceful shutdown (final flush + pool close). The
+/// listening port is already unbound by then, so this only bounds how long
+/// the process may linger, never how long the port stays occupied.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
     let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
-    let listener = TcpListener::bind(&addr)
+    let listener = bind_with_retry(&addr, BIND_RETRY_WINDOW, BIND_RETRY_DELAY)
         .await
         .with_context(|| format!("failed to bind {addr}"))?;
     tracing::info!(%addr, "HorizonDB listening");
@@ -54,6 +65,10 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
     let session_purger = tokio::spawn(session_purge_loop(Arc::clone(&state)));
     let memory_purger = tokio::spawn(memory_purge_loop(Arc::clone(&state)));
     let stats_logger = tokio::spawn(stats_loop(Arc::clone(&state)));
+
+    let mut connections = JoinSet::new();
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
@@ -66,7 +81,7 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
                         continue;
                     };
                     let task_state = Arc::clone(&state);
-                    tokio::spawn(async move {
+                    connections.spawn(async move {
                         let _permit = permit;
                         let connection_state = Arc::clone(&task_state);
                         if let Err(error) = serve_connection(connection_state, stream, peer).await {
@@ -79,25 +94,66 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
                 }
                 Err(error) => tracing::error!(%error, "failed to accept connection"),
             },
-            () = shutdown_signal() => {
+            () = &mut shutdown => {
                 tracing::info!("shutdown signal received");
                 break;
             }
         }
     }
 
+    // Unbind before flushing: once the listener is dropped the port is free
+    // for the next instance (pm2 restart / systemd), even if the final flush
+    // below turns out to be slow.
+    drop(listener);
+
     session_purger.abort();
     memory_purger.abort();
     stats_logger.abort();
 
-    let active_sessions = state.sessions.active_sessions().await;
-    let (memory_hits, memory_misses) = state.repository.memory_stats();
-    state
-        .metrics
-        .log_stats(active_sessions, memory_hits, memory_misses);
-    state.shutdown().await;
+    // Cut live connections so no incoming writes race the final flush.
+    connections.abort_all();
+    let _ = connections.join_all().await;
+
+    let graceful = async {
+        let active_sessions = state.sessions.active_sessions().await;
+        let (memory_hits, memory_misses) = state.repository.memory_stats();
+        state
+            .metrics
+            .log_stats(active_sessions, memory_hits, memory_misses);
+        state.shutdown().await;
+    };
+    // A hung or slow PostgreSQL must never keep the process (and its file
+    // descriptors) alive indefinitely.
+    if timeout(SHUTDOWN_TIMEOUT, graceful).await.is_err() {
+        tracing::error!(
+            timeout = ?SHUTDOWN_TIMEOUT,
+            "graceful shutdown timed out; buffered writes may not have reached PostgreSQL"
+        );
+    }
     tracing::info!("HorizonDB stopped");
     Ok(())
+}
+
+async fn bind_with_retry(
+    addr: &str,
+    window: Duration,
+    delay: Duration,
+) -> std::io::Result<TcpListener> {
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        match TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                if tokio::time::Instant::now() >= deadline {
+                    tracing::error!(%addr, "port still in use after retry window, giving up");
+                    return Err(error);
+                }
+                tracing::warn!(%addr, "port in use, retrying while the previous instance releases it");
+                tokio::time::sleep(delay).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 async fn serve_connection(
@@ -276,5 +332,44 @@ async fn stats_loop(state: Arc<AppState>) {
         state
             .metrics
             .log_stats(active_sessions, memory_hits, memory_misses);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bind_retries_until_previous_holder_releases_port() {
+        let holder = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = holder.local_addr().unwrap().to_string();
+
+        let retry_addr = addr.clone();
+        let binder = tokio::spawn(async move {
+            bind_with_retry(
+                &retry_addr,
+                Duration::from_secs(5),
+                Duration::from_millis(50),
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!binder.is_finished());
+        drop(holder);
+
+        let listener = binder.await.unwrap().unwrap();
+        assert_eq!(listener.local_addr().unwrap().to_string(), addr);
+    }
+
+    #[tokio::test]
+    async fn bind_gives_up_after_window_when_port_stays_busy() {
+        let holder = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = holder.local_addr().unwrap().to_string();
+
+        let error = bind_with_retry(&addr, Duration::from_millis(150), Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
     }
 }
