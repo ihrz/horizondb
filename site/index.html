@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HorizonDB</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="JSON key-value server over WebSocket. Memory above, PostgreSQL below. The database behind iHorizon.">
+<meta property="og:title" content="HorizonDB">
+<meta property="og:description" content="JSON key-value over WebSocket. Memory above, PostgreSQL below.">
+<meta property="og:image" content="../assets/social.png">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500&family=Fira+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap">
+<style>
+/* Layout: one dusk scene. The page itself is split by a horizon:
+   what lives in memory reads above it, what lands in PostgreSQL below. Dark only, by design. */
+:root {
+  color-scheme: dark;
+  --sky-top: #0C1030;
+  --sky: #1A1645;
+  --dusk: #2A1A55;
+  --water: #0B0D26;
+  --deep: #060818;
+  --paper: #FFF7EE;
+  --haze: #B9B3DA;
+  --mute: #8A84AE;
+  --gold: #FFE7A3;
+  --amber: #FFB347;
+  --ember: #FF7A45;
+  --rose: #FF5A7A;
+  --line: rgba(255, 244, 230, 0.12);
+  --panel: rgba(17, 21, 58, 0.72);
+  --sun: linear-gradient(180deg, var(--gold), var(--amber) 45%, var(--rose));
+  --sun-x: linear-gradient(90deg, #FFC75F, var(--rose));
+  --f-display: "Fira Sans", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Fira Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "Fira Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --s-1: 0.8125rem; --s0: 1.0625rem; --s1: 1.3rem; --s2: 1.75rem; --s3: 2.5rem; --s4: clamp(2.6rem, 7vw, 5rem);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--deep);
+  color: var(--paper);
+  font: 400 var(--s0)/1.6 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--amber); text-underline-offset: 3px; }
+a:hover { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+code, pre, .mono { font-family: var(--f-mono); }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.1; }
+p { margin: 0; }
+.wrap {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.eyebrow {
+  font: 500 var(--s-1)/1.4 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+.sunword {
+  background: var(--sun-x);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------- above the horizon ---------- */
+.sky {
+  background:
+    radial-gradient(60% 50% at 50% 100%, rgba(255, 106, 94, 0.22), transparent 70%),
+    linear-gradient(180deg, var(--sky-top), var(--sky) 55%, var(--dusk));
+  position: relative;
+}
+nav { padding-block: 20px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--paper); font: 700 1.25rem/1 var(--f-display); letter-spacing: -0.01em; }
+.brand svg { width: 36px; height: 36px; flex: none; }
+.brand b { font-weight: 800; }
+nav .links { margin-left: auto; display: flex; gap: 20px; flex-wrap: wrap; font-size: var(--s-1); }
+nav .links a { color: var(--haze); text-decoration: none; }
+nav .links a:hover { color: var(--paper); }
+
+.hero { padding-block: clamp(32px, 7vw, 72px) 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; justify-items: center; text-align: center; }
+.hero > * { max-width: 100%; }
+p code, li code { font-size: 0.9em; color: var(--paper); }
+.hero h1 { font-size: var(--s4); font-weight: 800; letter-spacing: -0.03em; max-width: 14ch; }
+.hero h1 .below { color: var(--haze); font-weight: 700; }
+.hero .lede { color: var(--haze); font-size: var(--s1); max-width: 40ch; line-height: 1.5; }
+.ctas { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; width: 100%; }
+.ctas > * { min-width: 0; }
+.install {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(6, 8, 24, 0.55); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 10px 10px 16px; font: 400 0.9rem/1.2 var(--f-mono); color: var(--paper);
+  max-width: 100%; min-width: 0;
+}
+.install span { overflow-x: auto; white-space: nowrap; min-width: 0; }
+button, .btn {
+  font: 500 0.9rem/1 var(--f-body); border-radius: 8px; cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.install button { background: rgba(255, 244, 230, 0.08); color: var(--paper); border: 1px solid var(--line); padding: 8px 12px; flex: none; }
+.install button:hover { background: rgba(255, 244, 230, 0.16); }
+.btn-sun { background: var(--sun-x); color: #2A0E1F; padding: 13px 20px; border: 0; font-weight: 700; }
+.btn-sun:hover { color: #2A0E1F; filter: brightness(1.08); }
+
+.scene { position: relative; width: 100%; height: clamp(260px, 42vw, 420px); margin-top: clamp(24px, 4vw, 40px); }
+.scene canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scene .hud {
+  position: absolute; bottom: calc(38% + 14px); left: 0; right: 0;
+  display: flex; justify-content: space-between; gap: 12px; pointer-events: none;
+}
+.hud .tag { font: 500 0.75rem/1.3 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--haze); }
+.hud .tag strong { display: block; color: var(--paper); font-size: 1.1rem; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.hud .right { text-align: right; }
+.scene .under { position: absolute; top: calc(62% + 14px); left: 0; right: 0; display: flex; justify-content: space-between; gap: 12px; pointer-events: none; }
+.scene .under .tag { color: var(--mute); }
+.sim-note { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; font: 400 0.72rem/1.3 var(--f-mono); color: var(--mute); }
+
+/* ---------- the horizon ---------- */
+.horizon { height: 2px; background: linear-gradient(90deg, transparent, rgba(255, 244, 230, 0.35) 20%, #fff 50%, rgba(255, 244, 230, 0.35) 80%, transparent); }
+
+/* ---------- below the horizon ---------- */
+.water { background: linear-gradient(180deg, var(--water), var(--deep) 420px); }
+section { padding-block: clamp(56px, 9vw, 104px); }
+section + section { border-top: 1px solid var(--line); }
+.head { display: grid; gap: 12px; max-width: 62ch; margin-bottom: 40px; }
+.head h2 { font-size: var(--s3); font-weight: 800; letter-spacing: -0.02em; }
+.head p { color: var(--haze); }
+
+.codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 20px; }
+.code { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.code header { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); font: 500 0.75rem/1.3 var(--f-mono); color: var(--mute); text-transform: uppercase; letter-spacing: 0.08em; }
+.code pre { margin: 0; padding: 18px 16px; overflow-x: auto; font-size: 0.86rem; line-height: 1.7; color: var(--paper); }
+.k { color: #FF8FA6; } .s { color: var(--gold); } .c { color: var(--mute); } .n { color: #FFB38A; } .f { color: #C9C2FF; }
+.arrow-out { color: var(--amber); } .arrow-in { color: #9EE6C9; }
+
+/* the three layers, drawn as a cross-section */
+.strata { display: grid; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.stratum { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 24px; padding: 28px clamp(18px, 3vw, 32px); align-items: start; }
+.stratum h3 { font-size: var(--s1); font-weight: 700; }
+.stratum .where { margin-top: 6px; font: 500 var(--s-1)/1.4 var(--f-mono); color: var(--mute); }
+.stratum p { color: var(--haze); max-width: 62ch; }
+.stratum.mem { background: linear-gradient(180deg, rgba(42, 26, 85, 0.9), rgba(52, 27, 88, 0.9)); }
+.stratum.mem h3 { color: var(--gold); }
+.stratum.flush { background: rgba(255, 244, 230, 0.04); border-block: 2px solid rgba(255, 244, 230, 0.55); }
+.stratum.flush h3 { color: var(--paper); }
+.stratum.pg { background: rgba(6, 8, 24, 0.8); }
+.stratum.pg h3 { color: #FF9AAE; }
+.limits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.limits span { font: 400 0.78rem/1 var(--f-mono); padding: 7px 10px; border-radius: 6px; background: rgba(255, 244, 230, 0.06); color: var(--paper); }
+
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 36px 40px; }
+.feature { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.feature h3 { font-size: var(--s0); font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.feature h3::before { content: ""; width: 18px; height: 4px; border-radius: 2px; background: var(--sun-x); flex: none; }
+.feature p { color: var(--haze); font-size: 0.97rem; }
+.feature code { font-size: 0.86em; color: var(--paper); }
+
+.warning {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; align-items: start;
+  padding: 24px; border-radius: 12px; background: rgba(255, 122, 69, 0.08); border: 1px solid rgba(255, 122, 69, 0.35);
+}
+.warning svg { width: 28px; height: 28px; color: var(--ember); }
+.warning h3 { font-size: var(--s0); margin-bottom: 6px; }
+.warning p { color: var(--haze); }
+
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.95rem; min-width: 520px; }
+th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+th { font: 500 0.75rem/1.3 var(--f-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--mute); background: rgba(255, 244, 230, 0.03); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--paper); }
+td.num.hi { color: var(--gold); }
+td code { color: var(--paper); }
+.caption { margin-top: 14px; color: var(--mute); font-size: var(--s-1); max-width: 70ch; }
+
+.steps { display: grid; gap: 20px; counter-reset: step; }
+.step { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 16px; align-items: start; }
+.step::before {
+  counter-increment: step; content: counter(step);
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 1rem/1 var(--f-mono); color: #2A0E1F; background: var(--sun);
+}
+.step h3 { font-size: var(--s0); margin: 10px 0 8px; }
+.step p { color: var(--haze); margin-bottom: 10px; }
+.step pre { margin: 0; padding: 14px 16px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); overflow-x: auto; font-size: 0.86rem; line-height: 1.65; }
+
+footer { padding-block: 48px 64px; border-top: 1px solid var(--line); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: center; justify-content: space-between; color: var(--mute); font-size: var(--s-1); }
+footer .sig { display: flex; align-items: center; gap: 12px; }
+footer .sig svg { width: 28px; height: 28px; color: var(--amber); }
+footer nav { padding: 0; }
+
+@media (max-width: 640px) {
+  .stratum { grid-template-columns: 1fr; gap: 10px; }
+  nav .links { margin-left: 0; width: 100%; }
+  .hud .tag strong { font-size: 0.95rem; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<div class="sky">
+  <div class="wrap">
+    <nav aria-label="Main">
+      <a class="brand" href="#top" id="top">
+        <svg viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="n-sky" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#11153A"/><stop offset="0.515" stop-color="#341B58"/><stop offset="0.516" stop-color="#0D0F2A"/><stop offset="1" stop-color="#060818"/></linearGradient>
+            <linearGradient id="n-sun" x1="0" y1="144" x2="0" y2="264" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE7A3"/><stop offset="0.45" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <linearGradient id="n-rows" x1="136" y1="0" x2="376" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <mask id="n-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask>
+          </defs>
+          <rect width="512" height="512" rx="112" fill="url(#n-sky)"/>
+          <circle cx="256" cy="264" r="120" fill="url(#n-sun)" mask="url(#n-cut)"/>
+          <rect x="56" y="260" width="400" height="8" rx="4" fill="#FFF4E6"/>
+          <g fill="url(#n-rows)"><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.9"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.36"/></g>
+        </svg>
+        <span>Horizon<b class="sunword">DB</b></span>
+      </a>
+      <div class="links">
+        <a href="#layers">How it works</a>
+        <a href="#protocol">Protocol</a>
+        <a href="#performance">Performance</a>
+        <a href="#start">Quick start</a>
+        <a href="https://gitlab.com/ihrz/db">GitLab</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <p class="eyebrow">Key-value server for Discord bots · Rust</p>
+      <h1>Memory above. <span class="below">PostgreSQL below.</span></h1>
+      <p class="lede">HorizonDB answers every read and write from memory, then settles your JSON into PostgreSQL in batches. One WebSocket, one tiny Bun client.</p>
+      <div class="ctas">
+        <div class="install">
+          <span id="install-cmd">"horizondb": "git+https://gitlab.com/ihrz/db.git#main"</span>
+          <button type="button" id="copy-install" aria-label="Copy the dependency line for package.json">Copy</button>
+        </div>
+        <a class="btn btn-sun" href="#start">Run it locally</a>
+      </div>
+    </header>
+  </div>
+
+  <div class="scene" aria-label="Animation: requests reach the in-memory store above the horizon; every few seconds a flush sends them down into PostgreSQL." role="img">
+    <canvas id="scene"></canvas>
+    <div class="wrap hud">
+      <div class="tag">in memory, dirty<strong id="dirty">0 keys</strong></div>
+      <div class="tag right">next flush<strong id="next">6.0 s</strong></div>
+    </div>
+    <div class="wrap under">
+      <div class="tag">PostgreSQL</div>
+      <div class="tag" id="flushed">0 rows flushed</div>
+    </div>
+    <p class="sim-note">Simulation · flush every 6 s here, every <code>flush_interval_secs</code> (300 s by default) for real</p>
+  </div>
+</div>
+
+<div class="horizon" role="presentation"></div>
+
+<main class="water">
+  <section class="wrap" id="protocol" aria-labelledby="protocol-title">
+    <div class="head">
+      <p class="eyebrow">Write it once</p>
+      <h2 id="protocol-title">Every mutation answers with its result</h2>
+      <p>Dot keys address inside one JSON document per base key. <code>add</code> returns the new number, <code>delete</code> whether the key existed, <code>push</code> the array. Your bot never needs a second round trip to know where it stands.</p>
+    </div>
+    <div class="codes">
+      <div class="code">
+        <header><span>bot.ts</span><span>Bun SDK</span></header>
+<pre><span class="k">import</span> { HorizonDB } <span class="k">from</span> <span class="s">"horizondb"</span>;
+
+<span class="k">const</span> db = <span class="k">await</span> HorizonDB.<span class="f">connect</span>({
+  url: <span class="s">"ws://127.0.0.1:8080"</span>,
+  username: <span class="s">"admin"</span>, password: <span class="s">"secret"</span>,
+});
+
+<span class="k">await</span> db.<span class="f">set</span>(<span class="s">"guild.42.settings.prefix"</span>, <span class="s">"!"</span>);
+<span class="k">await</span> db.<span class="f">add</span>(<span class="s">"guild.42.stats.messages"</span>);   <span class="c">// → 1</span>
+<span class="k">await</span> db.<span class="f">push</span>(<span class="s">"guild.42.mods"</span>, <span class="s">"1234"</span>,
+  { returnValue: <span class="n">true</span> });                     <span class="c">// → ["1234"]</span>
+<span class="k">await</span> db.<span class="f">cache</span>(<span class="s">"cooldown.42.daily"</span>, <span class="n">true</span>, <span class="n">86_400_000</span>);
+
+<span class="k">await</span> db.<span class="f">get</span>(<span class="s">"guild.42"</span>);
+<span class="c">// { settings: {…}, stats: { messages: 1 }, mods: ["1234"] }</span></pre>
+      </div>
+      <div class="code">
+        <header><span>the wire</span><span>JSON over WebSocket</span></header>
+<pre><span class="arrow-out">→</span> { <span class="s">"id"</span>: <span class="s">"1"</span>, <span class="s">"operation"</span>: <span class="s">"login"</span>,
+    <span class="s">"login"</span>: <span class="s">"admin"</span>, <span class="s">"password"</span>: <span class="s">"secret"</span> }
+<span class="arrow-in">←</span> { <span class="s">"id"</span>: <span class="s">"1"</span>, <span class="s">"type"</span>: <span class="s">"response"</span>,
+    <span class="s">"data"</span>: { <span class="s">"success"</span>: <span class="n">true</span>, <span class="s">"sessionId"</span>: <span class="s">"9f1c…"</span> } }
+
+<span class="arrow-out">→</span> { <span class="s">"id"</span>: <span class="s">"2"</span>, <span class="s">"operation"</span>: <span class="s">"add"</span>,
+    <span class="s">"sessionId"</span>: <span class="s">"9f1c…"</span>, <span class="s">"table"</span>: <span class="s">"json"</span>,
+    <span class="s">"key"</span>: <span class="s">"guild.42.stats.messages"</span>, <span class="s">"amount"</span>: <span class="n">1</span>,
+    <span class="s">"timeoutMs"</span>: <span class="n">10000</span> }
+<span class="arrow-in">←</span> { <span class="s">"id"</span>: <span class="s">"2"</span>, <span class="s">"type"</span>: <span class="s">"response"</span>,
+    <span class="s">"data"</span>: { <span class="s">"success"</span>: <span class="n">true</span>, <span class="s">"value"</span>: <span class="n">2</span> } }
+
+<span class="c">// any language with a WebSocket can be a client</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" id="layers" aria-labelledby="layers-title">
+    <div class="head">
+      <p class="eyebrow">Cross-section</p>
+      <h2 id="layers-title">Three layers, one line between them</h2>
+      <p>A bot hammers a few large documents from many shards at once. A SQL round trip per <code>add</code> is too slow, and memory alone forgets on restart. HorizonDB keeps both and draws the line where it costs least.</p>
+    </div>
+    <div class="strata">
+      <div class="stratum mem">
+        <div><h3>Memory</h3><p class="where">above the horizon</p></div>
+        <div>
+          <p>Every <code>get</code>, <code>set</code>, <code>add</code> and <code>push</code> runs here. Each document sits behind its own lock: readers copy only the sub-tree they asked for, writers edit in place, so a push into a multi-megabyte guild costs microseconds. Keys not loaded yet are read once from PostgreSQL, single-flighted, then stay hot.</p>
+          <div class="limits"><span>per-key RwLock</span><span>nesting ≤ 32</span><span>keys ≤ 255 B</span><span>TTL ≤ 30 days</span></div>
+        </div>
+      </div>
+      <div class="stratum flush">
+        <div><h3>The flush</h3><p class="where">the horizon</p></div>
+        <div>
+          <p>Every <code>flush_interval_secs</code> and on SIGINT/SIGTERM, dirty keys go down per table: <code>UNNEST</code> upserts and <code>ANY</code> deletes. Dirty marks carry a generation, so a write that lands mid-flush stays dirty for the next cycle.</p>
+          <div class="limits"><span>500 rows / 32 MiB per upsert</span><span>5 000 ids per delete</span><span>default 300 s</span></div>
+        </div>
+      </div>
+      <div class="stratum pg">
+        <div><h3>PostgreSQL</h3><p class="where">below the horizon</p></div>
+        <div>
+          <p>Plain tables, created on demand: an <code>id</code> and a JSON <code>value</code>. Query them, back them up, restore them with the tools you already run. Table names are validated before they ever reach SQL.</p>
+          <div class="limits"><span>id VARCHAR(255)</span><span>value TEXT (JSON)</span><span>[A-Za-z_][A-Za-z0-9_]{0,62}</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" aria-labelledby="features-title">
+    <div class="head">
+      <p class="eyebrow">Built for load</p>
+      <h2 id="features-title">Fast where it counts, strict everywhere else</h2>
+    </div>
+    <div class="features">
+      <div class="feature"><h3>No lost updates</h3><p>Read-modify-write is serialized per key. Sixteen workers hitting one counter end on the exact sum, checked on every benchmark run.</p></div>
+      <div class="feature"><h3>Pipelined by design</h3><p>Requests are correlated by <code>id</code>, so one socket carries up to 1 024 in flight. Past that the server stops reading and TCP pushes back.</p></div>
+      <div class="feature"><h3>Deadlines respected</h3><p>A request carrying <code>timeoutMs</code> that already waited too long gets <code>deadline exceeded</code> instead of work nobody is waiting for.</p></div>
+      <div class="feature"><h3>Auth done properly</h3><p>argon2id <code>password_hash</code> or constant-time comparison, UUID sessions that expire on their own.</p></div>
+      <div class="feature"><h3>A client that heals</h3><p>The SDK re-logs once on an expired session, reconnects with backoff when a socket goes silent, and throws typed errors. Zero runtime dependencies.</p></div>
+      <div class="feature"><h3>Safe Rust, pedantic clean</h3><p><code>unsafe</code> is forbidden, clippy pedantic passes, internal errors stay in the logs and clients get a generic message.</p></div>
+    </div>
+  </section>
+
+  <section class="wrap" aria-labelledby="durability-title">
+    <div class="warning" role="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18h18"/><path d="M7 18a5 5 0 0 1 10 0"/><path d="M12 6v3"/><path d="m5.6 9.6 1.5 1.5"/><path d="m18.4 9.6-1.5 1.5"/></svg>
+      <div>
+        <h3 id="durability-title">Durability is a trade you choose</h3>
+        <p>Until the next flush, writes live only in memory. A crash or <code>kill -9</code> loses up to <code>flush_interval_secs</code> of them; a graceful stop flushes everything first, and the systemd unit gives it five minutes to do so. Lower the interval if that window is too wide for your data.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" id="performance" aria-labelledby="perf-title">
+    <div class="head">
+      <p class="eyebrow">Measured, not promised</p>
+      <h2 id="perf-title">Tens of microseconds on the hot path</h2>
+      <p>End to end through the SDK, against a real server and PostgreSQL, network included.</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Path</th><th scope="col">Throughput</th><th scope="col">p50</th><th scope="col">p95</th></tr></thead>
+        <tbody>
+          <tr><td>hot <code>get</code>, one connection</td><td class="num hi">18.1 k ops/s</td><td class="num">42 µs</td><td class="num">67 µs</td></tr>
+          <tr><td><code>has</code>, one connection</td><td class="num hi">20.1 k ops/s</td><td class="num">39 µs</td><td class="num">53 µs</td></tr>
+          <tr><td>login + logout</td><td class="num hi">17.2 k ops/s</td><td class="num">43 µs</td><td class="num">66 µs</td></tr>
+          <tr><td>raw WebSocket client, same server</td><td class="num hi">48 k ops/s</td><td class="num">—</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">Linux laptop, consumer NVMe, PostgreSQL 16 in a container, Bun, Rust <em>debug</em> build, <code>--quick</code> profile. Full table, method and known issues in <a href="https://gitlab.com/ihrz/db/-/blob/main/benchmarks/BENCHMARKS.md">BENCHMARKS.md</a>. Reproduce with <code>./scripts/bench.sh --quick</code>.</p>
+  </section>
+
+  <section class="wrap" id="start" aria-labelledby="start-title">
+    <div class="head">
+      <p class="eyebrow">Quick start</p>
+      <h2 id="start-title">From clone to first key</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div>
+        <h3>Start PostgreSQL and the server</h3>
+        <p>The helper script runs a PostgreSQL container, writes <code>config.toml</code>, builds and starts the server.</p>
+<pre>git clone https://gitlab.com/ihrz/db.git horizondb && cd horizondb
+./scripts/dev-up.sh          <span class="c"># ws://127.0.0.1:8080, logs in .server.log</span></pre>
+      </div></div>
+      <div class="step"><div>
+        <h3>Add the client to your bot</h3>
+        <p>Bun runs the TypeScript straight from the repository. Pin a tag for reproducible builds.</p>
+<pre><span class="s">"dependencies"</span>: { <span class="s">"horizondb"</span>: <span class="s">"git+https://gitlab.com/ihrz/db.git#main"</span> }</pre>
+      </div></div>
+      <div class="step"><div>
+        <h3>Go to production</h3>
+        <p>Copy <code>example.config.toml</code>, set an argon2id <code>password_hash</code>, size <code>max_message_size</code> above your largest document, and install <code>horizondb.service</code>.</p>
+<pre>cargo build --release
+sudo cp horizondb.service /etc/systemd/system/ && sudo systemctl enable --now horizondb</pre>
+      </div></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="sig">
+      <svg viewBox="36 40 440 440" fill="currentColor" aria-hidden="true">
+        <defs><mask id="f-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask></defs>
+        <circle cx="256" cy="264" r="120" mask="url(#f-cut)"/><rect x="56" y="260" width="400" height="8" rx="4"/><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+      </svg>
+      <span>HorizonDB is part of the iHorizon project. Work in progress: the wire protocol may still change.</span>
+    </div>
+    <nav aria-label="Footer" class="links">
+      <a href="https://gitlab.com/ihrz/db">Repository</a>
+      <a href="https://gitlab.com/ihrz/db/-/blob/main/sdk/SDK_GUIDE.md">SDK guide</a>
+      <a href="https://gitlab.com/ihrz/db/-/blob/main/WHAT.md">Design notes</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(() => {
+  // Copy the install command; fall back to selecting it when the clipboard is refused.
+  const btn = document.getElementById("copy-install");
+  const cmd = document.getElementById("install-cmd");
+  btn.addEventListener("click", () => {
+    const done = () => { btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1600); };
+    const select = () => { const r = document.createRange(); r.selectNodeContents(cmd); const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected"; };
+    try { navigator.clipboard.writeText(cmd.textContent).then(done, select); } catch { select(); }
+  });
+
+  // The scene: requests fly into the sun (memory); every FLUSH_MS the dirty rows sink below the horizon.
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d");
+  const dirtyEl = document.getElementById("dirty");
+  const nextEl = document.getElementById("next");
+  const flushedEl = document.getElementById("flushed");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const FLUSH_MS = 6000;
+  const HORIZON = 0.62;
+  let w = 0, h = 0, dpr = 1;
+  let reqs = [], sinking = [], stars = [];
+  let dirty = 0, flushed = 0, lastFlush = performance.now(), lastSpawn = 0, glow = 0;
+
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    const r = canvas.getBoundingClientRect();
+    w = r.width; h = r.height;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    stars = Array.from({ length: Math.round(w / 22) }, () => ({ x: Math.random() * w, y: Math.random() * h * HORIZON * 0.8, r: Math.random() * 1.3 + 0.3, a: Math.random() * 0.5 + 0.15 }));
+  }
+
+  const geo = () => { const hy = h * HORIZON; const r = Math.min(h * 0.4, w * 0.2, 170); return { hy, r, cx: w / 2 }; };
+
+  function spawn(now) {
+    const { hy, r, cx } = geo();
+    const left = Math.random() < 0.5;
+    const ty = hy - r * (0.25 + Math.random() * 0.6);
+    reqs.push({ x0: left ? -10 : w + 10, y0: hy * (0.15 + Math.random() * 0.7), tx: cx + (left ? -1 : 1) * r * (0.1 + Math.random() * 0.4), ty, t0: now, dur: 1100 + Math.random() * 900 });
+  }
+
+  function drawSun(cx, hy, r) {
+    const g = ctx.createLinearGradient(0, hy - r, 0, hy);
+    g.addColorStop(0, "#FFE7A3"); g.addColorStop(0.45, "#FFB347"); g.addColorStop(1, "#FF5A7A");
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, w, hy); ctx.clip();
+    ctx.beginPath(); ctx.arc(cx, hy, r, Math.PI, 0); ctx.fillStyle = g; ctx.fill();
+    // the rows breaking off the sun's lower edge, thicker as they near the horizon
+    ctx.globalCompositeOperation = "destination-out";
+    [[0.42, 0.04], [0.27, 0.06], [0.12, 0.08]].forEach(([f, t]) => ctx.fillRect(0, hy - r * f, w, r * t));
+    ctx.restore();
+  }
+
+  function frame(now) {
+    const { hy, r, cx } = geo();
+    ctx.clearRect(0, 0, w, h);
+
+    // glow
+    const rg = ctx.createRadialGradient(cx, hy, 0, cx, hy, r * 3);
+    rg.addColorStop(0, `rgba(255,106,94,${0.32 + glow * 0.25})`); rg.addColorStop(0.45, "rgba(255,79,123,0.1)"); rg.addColorStop(1, "rgba(255,79,123,0)");
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, w, h);
+
+    // stars
+    ctx.fillStyle = "#FFF4E6";
+    for (const s of stars) { ctx.globalAlpha = s.a; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.283); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    // water below the horizon
+    const wg = ctx.createLinearGradient(0, hy, 0, h);
+    wg.addColorStop(0, "#0D0F2A"); wg.addColorStop(1, "#0B0D26");
+    ctx.fillStyle = wg; ctx.fillRect(0, hy, w, h - hy);
+
+    drawSun(cx, hy, r);
+
+    // reflection rows = what PostgreSQL holds; they brighten for a moment after each flush
+    const rows = [[0.9, 0.12, 0.85], [0.62, 0.3, 0.55], [0.36, 0.46, 0.32]];
+    rows.forEach(([k, dy, a]) => {
+      const bh = Math.max(5, r * 0.085);
+      const rg2 = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+      rg2.addColorStop(0, "#FFB347"); rg2.addColorStop(1, "#FF5A7A");
+      ctx.globalAlpha = Math.min(1, a + glow * 0.35);
+      ctx.fillStyle = rg2;
+      roundRect(cx - r * k, hy + r * dy, 2 * r * k, bh, bh / 2);
+    });
+    ctx.globalAlpha = 1;
+
+    // requests flying in from both sides (the clients)
+    if (!reduce && now - lastSpawn > 140) { spawn(now); lastSpawn = now; }
+    reqs = reqs.filter((q) => {
+      const t = Math.min(1, (now - q.t0) / q.dur);
+      const e = 1 - Math.pow(1 - t, 3);
+      const x = q.x0 + (q.tx - q.x0) * e, y = q.y0 + (q.ty - q.y0) * e;
+      ctx.fillStyle = t < 1 ? "rgba(255,244,230,0.9)" : "#FFE7A3";
+      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = "rgba(255,244,230,0.18)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - (q.tx - q.x0) * 0.06, y - (q.ty - q.y0) * 0.06); ctx.stroke();
+      if (t >= 1) { dirty++; return false; }
+      return true;
+    });
+
+    // the flush: dirty rows sink through the horizon
+    if (!reduce && now - lastFlush > FLUSH_MS) {
+      lastFlush = now;
+      const n = Math.min(6, Math.max(1, Math.round(dirty / 8)));
+      for (let i = 0; i < n; i++) sinking.push({ t0: now + i * 90, k: 0.25 + Math.random() * 0.55 });
+      flushed += dirty; dirty = 0; glow = 1;
+    }
+    sinking = sinking.filter((s) => {
+      const t = (now - s.t0) / 900;
+      if (t < 0) return true;
+      if (t >= 1) return false;
+      const bh = Math.max(4, r * 0.06);
+      const y = hy - r * 0.2 + (r * 0.75) * t * t;
+      ctx.globalAlpha = 1 - t;
+      ctx.fillStyle = "#FF8A6B";
+      roundRect(cx - r * s.k, y, 2 * r * s.k, bh, bh / 2);
+      ctx.globalAlpha = 1;
+      return true;
+    });
+    glow = Math.max(0, glow - 0.02);
+
+    // the horizon line
+    const lg = ctx.createLinearGradient(0, 0, w, 0);
+    lg.addColorStop(0, "rgba(255,244,230,0)"); lg.addColorStop(0.5, `rgba(255,255,255,${0.75 + glow * 0.25})`); lg.addColorStop(1, "rgba(255,244,230,0)");
+    ctx.fillStyle = lg; ctx.fillRect(0, hy - 1, w, 2 + glow * 2);
+
+    dirtyEl.textContent = `${dirty} ${dirty === 1 ? "key" : "keys"}`;
+    nextEl.textContent = reduce ? "every 300 s" : `${Math.max(0, (FLUSH_MS - (now - lastFlush)) / 1000).toFixed(1)} s`;
+    flushedEl.textContent = `${flushed.toLocaleString("en-US")} rows flushed`;
+    if (!reduce) requestAnimationFrame(frame);
+  }
+
+  function roundRect(x, y, wd, ht, rad) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, wd, ht, rad); else ctx.rect(x, y, wd, ht);
+    ctx.fill();
+  }
+
+  resize();
+  addEventListener("resize", () => { resize(); if (reduce) frame(performance.now()); });
+  if (reduce) { dirty = 24; frame(performance.now()); } else requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

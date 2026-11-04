@@ -1,6 +1,6 @@
 [Unit]
 Description=HorizonDB key-value database server
-Documentation=https://gitlab.com/ihrz/ihrzdb
+Documentation=https://gitlab.com/ihrz/db
 Wants=network-online.target
 After=network-online.target
 

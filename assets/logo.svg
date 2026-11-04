@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>HorizonDB</title>
+  <defs>
+    <linearGradient id="hz-sky" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#11153A"/>
+      <stop offset="0.5" stop-color="#2A1A55"/>
+      <stop offset="0.515" stop-color="#341B58"/>
+      <stop offset="0.516" stop-color="#0D0F2A"/>
+      <stop offset="1" stop-color="#060818"/>
+    </linearGradient>
+    <radialGradient id="hz-glow" cx="256" cy="264" r="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF7A59" stop-opacity="0.6"/>
+      <stop offset="0.42" stop-color="#FF4F7B" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#FF4F7B" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hz-sun" x1="0" y1="144" x2="0" y2="264" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE7A3"/>
+      <stop offset="0.45" stop-color="#FFB347"/>
+      <stop offset="1" stop-color="#FF5A7A"/>
+    </linearGradient>
+    <linearGradient id="hz-line" x1="56" y1="0" x2="456" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF4E6" stop-opacity="0"/>
+      <stop offset="0.22" stop-color="#FFF4E6" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#FFFFFF"/>
+      <stop offset="0.78" stop-color="#FFF4E6" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFF4E6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="hz-rows" x1="136" y1="0" x2="376" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB347"/>
+      <stop offset="1" stop-color="#FF5A7A"/>
+    </linearGradient>
+    <clipPath id="hz-tile">
+      <rect width="512" height="512" rx="112"/>
+    </clipPath>
+    <mask id="hz-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="264" fill="#FFFFFF"/>
+      <rect y="214" width="512" height="5" fill="#000000"/>
+      <rect y="232" width="512" height="7" fill="#000000"/>
+      <rect y="250" width="512" height="9" fill="#000000"/>
+    </mask>
+  </defs>
+  <g id="hz-mark">
+    <rect width="512" height="512" rx="112" fill="url(#hz-sky)"/>
+    <g clip-path="url(#hz-tile)">
+      <circle cx="256" cy="264" r="250" fill="url(#hz-glow)"/>
+      <g fill="#FFF4E6">
+        <circle cx="118" cy="104" r="3" opacity="0.55"/>
+        <circle cx="392" cy="86" r="2.4" opacity="0.45"/>
+        <circle cx="430" cy="176" r="2" opacity="0.35"/>
+        <circle cx="84" cy="196" r="2" opacity="0.3"/>
+        <circle cx="318" cy="118" r="1.6" opacity="0.4"/>
+      </g>
+    </g>
+    <!-- memory: the sun above the horizon, where every read and write lands;
+         its lower edge breaks into rows on their way down to the flush -->
+    <circle cx="256" cy="264" r="120" fill="url(#hz-sun)" mask="url(#hz-cut)"/>
+    <!-- the horizon: the flush -->
+    <rect x="56" y="261" width="400" height="6" rx="3" fill="url(#hz-line)"/>
+    <!-- PostgreSQL: the rows written behind, settling below the horizon -->
+    <g fill="url(#hz-rows)">
+      <rect x="148" y="292" width="216" height="20" rx="10" opacity="0.9"/>
+      <rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/>
+      <rect x="212" y="361" width="88" height="16" rx="8" opacity="0.36"/>
+    </g>
+    <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+  </g>
+</svg>

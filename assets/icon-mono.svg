@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="36 40 440 440" width="512" height="512" fill="currentColor">
+  <title>HorizonDB</title>
+  <defs>
+    <mask id="hzm-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="264" fill="#FFFFFF"/>
+      <rect y="214" width="512" height="6" fill="#000000"/>
+      <rect y="232" width="512" height="8" fill="#000000"/>
+      <rect y="250" width="512" height="10" fill="#000000"/>
+    </mask>
+  </defs>
+  <circle cx="256" cy="264" r="120" mask="url(#hzm-cut)"/>
+  <rect x="56" y="260" width="400" height="8" rx="4"/>
+  <rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/>
+  <rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/>
+  <rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+</svg>
