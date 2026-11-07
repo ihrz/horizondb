@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HorizonDB Brand Kit</title>
+<meta name="description" content="HorizonDB brand and press kit: logo files, colours, type, boilerplate copy in English and French, key facts and ready-to-post announcements.">
+<meta property="og:title" content="HorizonDB brand and press kit">
+<meta property="og:description" content="Logos, palette, type and copy for writing about HorizonDB. Memory above, PostgreSQL below.">
+<meta property="og:image" content="https://ihrz.gitlab.io/db/assets/social.png">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500&family=Fira+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap">
+<style>
+/* Same dusk scene as the landing page: the hero sits in the sky, the kit lies below the horizon. Dark only, by design. */
+:root {
+  color-scheme: dark;
+  --sky-top: #0C1030;
+  --sky: #1A1645;
+  --dusk: #2A1A55;
+  --water: #0B0D26;
+  --deep: #060818;
+  --paper: #FFF7EE;
+  --haze: #B9B3DA;
+  --mute: #8A84AE;
+  --gold: #FFE7A3;
+  --amber: #FFB347;
+  --ember: #FF7A45;
+  --rose: #FF5A7A;
+  --indigo: #11153A;
+  --line: rgba(255, 244, 230, 0.12);
+  --panel: rgba(17, 21, 58, 0.72);
+  --ok: #9EE6C9;
+  --no: #FF8FA6;
+  --sun: linear-gradient(180deg, var(--gold), var(--amber) 45%, var(--rose));
+  --sun-x: linear-gradient(90deg, #FFC75F, var(--rose));
+  --f-display: "Fira Sans", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Fira Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "Fira Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --s-1: 0.8125rem; --s0: 1.0625rem; --s1: 1.3rem; --s2: 1.75rem; --s3: 2.5rem; --s4: clamp(2.4rem, 6.4vw, 4.4rem);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--deep);
+  color: var(--paper);
+  font: 400 var(--s0)/1.6 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: var(--amber); text-underline-offset: 3px; }
+a:hover { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+code, pre, .mono { font-family: var(--f-mono); }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.1; }
+p { margin: 0; }
+img { max-width: 100%; }
+.wrap {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.eyebrow {
+  font: 500 var(--s-1)/1.4 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+.sunword {
+  background: var(--sun-x);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.skip { position: absolute; left: 16px; top: -60px; z-index: 10; background: var(--paper); color: var(--indigo); padding: 10px 14px; border-radius: 8px; font-weight: 700; }
+.skip:focus { top: 12px; }
+
+/* ---------- above the horizon ---------- */
+.sky {
+  background:
+    radial-gradient(60% 70% at 50% 100%, rgba(255, 106, 94, 0.24), transparent 70%),
+    linear-gradient(180deg, var(--sky-top), var(--sky) 55%, var(--dusk));
+  position: relative;
+  overflow: hidden;
+}
+nav { padding-block: 20px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--paper); font: 700 1.25rem/1 var(--f-display); letter-spacing: -0.01em; }
+.brand svg { width: 36px; height: 36px; flex: none; }
+.brand b { font-weight: 800; }
+nav .links { margin-left: auto; display: flex; gap: 8px 20px; flex-wrap: wrap; font-size: var(--s-1); }
+nav .links a { color: var(--haze); text-decoration: none; }
+nav .links a:hover, nav .links a[aria-current="page"] { color: var(--paper); }
+nav .links a[aria-current="page"] { text-decoration: underline; text-decoration-color: var(--rose); text-decoration-thickness: 2px; text-underline-offset: 6px; }
+
+.hero { padding-block: clamp(32px, 6vw, 64px) clamp(56px, 8vw, 88px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; justify-items: center; text-align: center; position: relative; }
+.hero > * { max-width: 100%; }
+.hero h1 { font-size: var(--s4); font-weight: 800; letter-spacing: -0.03em; }
+.hero .lede { color: var(--haze); font-size: var(--s1); max-width: 46ch; line-height: 1.5; }
+.ctas { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; width: 100%; }
+/* a low sun sitting on the horizon behind the hero */
+.hero-sun { position: absolute; left: 50%; bottom: 0; width: min(360px, 70vw); aspect-ratio: 2 / 1; transform: translateX(-50%); border-radius: 999px 999px 0 0; background: var(--sun); opacity: 0.16; pointer-events: none;
+  -webkit-mask: linear-gradient(180deg, #000 0 64%, transparent 64% 68%, #000 68% 79%, transparent 79% 84%, #000 84% 90%, transparent 90% 96%, #000 96%);
+          mask: linear-gradient(180deg, #000 0 64%, transparent 64% 68%, #000 68% 79%, transparent 79% 84%, #000 84% 90%, transparent 90% 96%, #000 96%); }
+
+button, .btn {
+  font: 500 0.9rem/1 var(--f-body); border-radius: 8px; cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-sun { background: var(--sun-x); color: #2A0E1F; padding: 13px 20px; border: 0; font-weight: 700; }
+.btn-sun:hover { color: #2A0E1F; filter: brightness(1.08); }
+.btn-ghost { background: rgba(255, 244, 230, 0.08); color: var(--paper); border: 1px solid var(--line); padding: 12px 18px; }
+.btn-ghost:hover { background: rgba(255, 244, 230, 0.16); color: var(--paper); }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.chip { background: rgba(255, 244, 230, 0.08); color: var(--paper); border: 1px solid var(--line); padding: 8px 12px; font: 500 0.8rem/1 var(--f-body); border-radius: 7px; }
+.chip:hover { background: rgba(255, 244, 230, 0.16); color: var(--paper); }
+.chip[data-state="done"] { border-color: rgba(158, 230, 201, 0.6); color: var(--ok); }
+
+/* ---------- the horizon ---------- */
+.horizon { height: 2px; background: linear-gradient(90deg, transparent, rgba(255, 244, 230, 0.35) 20%, #fff 50%, rgba(255, 244, 230, 0.35) 80%, transparent); }
+
+/* ---------- below the horizon ---------- */
+.water { background: linear-gradient(180deg, var(--water), var(--deep) 420px); }
+section { padding-block: clamp(56px, 9vw, 96px); scroll-margin-top: 8px; }
+section + section { border-top: 1px solid var(--line); }
+.head { display: grid; gap: 12px; max-width: 64ch; margin-bottom: 36px; }
+.head h2 { font-size: var(--s3); font-weight: 800; letter-spacing: -0.02em; }
+.head p { color: var(--haze); }
+h3.sub { font-size: var(--s1); font-weight: 700; margin: 48px 0 18px; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 8px; padding-block: 20px; border-bottom: 1px solid var(--line); }
+.toc a { font: 500 0.78rem/1 var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--haze); text-decoration: none; padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px; }
+.toc a:hover { color: var(--paper); border-color: rgba(255, 244, 230, 0.3); }
+
+/* asset cards */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 20px; }
+.card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+.card.wide { grid-column: 1 / -1; }
+.stage { display: grid; place-items: center; padding: 28px 20px; min-height: 200px; }
+.stage.dark { background: radial-gradient(70% 90% at 50% 100%, rgba(255, 106, 94, 0.14), transparent 70%), var(--deep); }
+.stage.light { background: #FFF7EE; }
+.stage.white { background: #FFFFFF; }
+.stage.split { grid-template-columns: 1fr 1fr; padding: 0; place-items: stretch; }
+.stage.split > div > img, .stage.split > div > svg { max-width: 100%; height: auto; }
+.stage.split > div { display: grid; place-items: center; padding: 28px 16px; min-height: 200px; }
+.stage img { display: block; height: auto; }
+.card-body { padding: 16px 18px 18px; display: grid; gap: 10px; align-content: start; }
+.card-body h3 { font-size: var(--s0); font-weight: 700; }
+.card-body p { color: var(--haze); font-size: 0.95rem; }
+.card-body .meta { font: 400 0.78rem/1.4 var(--f-mono); color: var(--mute); }
+.dl { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.dl a { font: 500 0.8rem/1 var(--f-mono); color: var(--paper); text-decoration: none; padding: 9px 12px; border-radius: 7px; background: rgba(255, 244, 230, 0.08); border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 6px; }
+.dl a:hover { background: rgba(255, 244, 230, 0.16); }
+.dl a svg { width: 14px; height: 14px; }
+
+/* the story of the mark */
+.story { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 36px; align-items: center; margin-top: 48px; padding: clamp(20px, 3vw, 32px); border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 244, 230, 0.02); }
+.story figure { margin: 0; position: relative; }
+.story figure svg { width: 100%; height: auto; display: block; }
+.story ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 16px; }
+.story li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; }
+.story li .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 700 0.85rem/1 var(--f-mono); color: #2A0E1F; background: var(--sun); }
+.story li strong { color: var(--paper); }
+.story li p { color: var(--haze); }
+.story .tagline { margin-top: 18px; font: 700 var(--s1)/1.3 var(--f-display); }
+
+/* usage rules */
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 20px; }
+.space-demo { position: relative; padding: 30px; border: 1px dashed rgba(255, 179, 71, 0.7); border-radius: 6px; }
+.space-demo img { width: 120px; height: 120px; display: block; }
+.space-demo .tick { position: absolute; font: 500 0.7rem/1 var(--f-mono); color: var(--amber); }
+.space-demo .t-top { top: 9px; left: 50%; transform: translateX(-50%); }
+.space-demo .t-left { left: 4px; top: 50%; transform: translateY(-50%) rotate(-90deg); }
+.sizes { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; justify-content: center; }
+.sizes figure { margin: 0; display: grid; justify-items: center; gap: 8px; }
+.sizes figcaption { font: 500 0.72rem/1 var(--f-mono); color: var(--mute); }
+.sizes .min figcaption { color: var(--amber); }
+.verdicts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+.verdict { min-width: 0; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; background: var(--panel); }
+.verdict .stage { min-height: 170px; padding: 20px; overflow: hidden; }
+.verdict .stage img, .verdict .stage svg { width: 96px; height: 96px; }
+.verdict p { padding: 12px 14px 14px; font-size: 0.9rem; color: var(--haze); display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; }
+.verdict p svg { width: 18px; height: 18px; margin-top: 3px; }
+.verdict.do p svg { color: var(--ok); }
+.verdict.dont p svg { color: var(--no); }
+.verdict.dont { border-color: rgba(255, 143, 166, 0.3); }
+.verdict strong { color: var(--paper); }
+.x-stretch { transform: scaleX(1.5); }
+.x-recolour { filter: hue-rotate(150deg) saturate(1.3); }
+.x-rotate { transform: rotate(-20deg); }
+.busy { background: linear-gradient(135deg, #FF9A5C, #F2C27A 40%, #E0717F 70%, #B98AD9); }
+
+/* palette */
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 14px; }
+.swatch { min-width: 0; text-align: left; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); color: var(--paper); display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; width: 100%; font: inherit; cursor: pointer; }
+.swatch:hover { border-color: rgba(255, 244, 230, 0.35); }
+.swatch .chipcolor { position: relative; display: block; height: 112px; flex: none; border-bottom: 1px solid var(--line); }
+.swatch .chipcolor .state { position: absolute; right: 10px; bottom: 10px; font: 500 0.72rem/1 var(--f-mono); padding: 6px 8px; border-radius: 6px; background: rgba(6, 8, 24, 0.75); color: var(--paper); opacity: 0; transition: opacity 0.15s; }
+.swatch:hover .state, .swatch:focus-visible .state, .swatch[data-state="done"] .state { opacity: 1; }
+.swatch[data-state="done"] .state { color: var(--ok); }
+.swatch .info { padding: 12px 14px 14px; display: grid; gap: 4px; align-content: start; }
+.swatch .name { font-weight: 700; }
+.swatch .hex { font: 500 0.85rem/1.2 var(--f-mono); color: var(--gold); }
+.swatch .role { font-size: 0.85rem; color: var(--haze); line-height: 1.45; }
+.gradients { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; }
+.gradients .swatch .chipcolor { height: 88px; }
+
+/* typography */
+.specimens { display: grid; gap: 14px; }
+.specimen { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 20px; align-items: baseline; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.specimen .label { font: 500 0.75rem/1.4 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+.specimen .sample { min-width: 0; overflow-wrap: anywhere; }
+.construct { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 20px; margin-top: 20px; }
+.wm-big { font: 700 clamp(2.6rem, 9vw, 5.2rem)/1 var(--f-display); letter-spacing: -0.025em; display: inline-flex; align-items: baseline; }
+.wm-big b { font-weight: 800; }
+.wm-parts { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }
+.wm-parts span { font: 400 0.75rem/1.3 var(--f-mono); color: var(--mute); padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; }
+.names { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.names li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 1.05rem; }
+.names li svg { width: 18px; height: 18px; }
+.names .yes svg { color: var(--ok); }
+.names .no svg { color: var(--no); }
+.names .no span { color: var(--haze); text-decoration: line-through; text-decoration-color: rgba(255, 143, 166, 0.7); }
+.names small { color: var(--mute); font-size: 0.85rem; }
+
+/* copy blocks */
+.lang-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 20px; }
+.copy { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+.copy header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--line); }
+.copy header .t { font: 500 0.75rem/1.3 var(--f-mono); color: var(--mute); text-transform: uppercase; letter-spacing: 0.08em; min-width: 0; }
+.copy header .t .count { color: var(--haze); text-transform: none; letter-spacing: 0; }
+.copy .text { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 0.95rem/1.6 var(--f-body); color: var(--paper); }
+.copy .text.code { font: 400 0.84rem/1.65 var(--f-mono); }
+.copy-stack { display: grid; gap: 16px; align-content: start; }
+.lang-head { font: 500 var(--s-1)/1.4 var(--f-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--haze); display: flex; align-items: center; gap: 10px; }
+.lang-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.badges-demo { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 18px 16px; border-bottom: 1px solid var(--line); }
+.badges-demo .on-light { background: #FFFFFF; padding: 10px; border-radius: 8px; display: inline-flex; }
+.badges-demo img { display: block; width: 201px; height: 32px; }
+
+/* key facts */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0; }
+.fact { padding: 20px 22px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); min-width: 0; display: grid; gap: 6px; align-content: start; }
+.fact dt { font: 500 0.75rem/1.3 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+.fact dd { margin: 0; color: var(--paper); }
+.fact dd small { display: block; color: var(--haze); font-size: 0.88rem; margin-top: 4px; line-height: 1.5; }
+.fact code { font-size: 0.88em; }
+.big { font: 800 var(--s2)/1.1 var(--f-display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.big .from { color: var(--haze); font-weight: 700; }
+.big .to { color: var(--gold); }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.95rem; min-width: 480px; }
+th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+th { font: 500 0.75rem/1.3 var(--f-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--mute); background: rgba(255, 244, 230, 0.03); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--paper); }
+td.num.hi { color: var(--gold); }
+.caption { margin-top: 14px; color: var(--mute); font-size: var(--s-1); max-width: 76ch; }
+
+/* contact */
+.links-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+.link-card { display: grid; gap: 6px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); text-decoration: none; color: var(--paper); min-width: 0; }
+.link-card:hover { border-color: rgba(255, 179, 71, 0.55); color: var(--paper); }
+.link-card strong { font-size: var(--s0); }
+.link-card span { color: var(--haze); font-size: 0.92rem; }
+.link-card code { color: var(--amber); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+footer { padding-block: 48px 64px; border-top: 1px solid var(--line); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: center; justify-content: space-between; color: var(--mute); font-size: var(--s-1); }
+footer .sig { display: flex; align-items: center; gap: 12px; }
+footer .sig svg { width: 28px; height: 28px; color: var(--amber); flex: none; }
+footer nav { padding: 0; }
+
+@media (max-width: 760px) {
+  .story { grid-template-columns: 1fr; }
+  .story figure { max-width: 220px; margin-inline: auto; }
+}
+@media (max-width: 640px) {
+  nav .links { margin-left: 0; width: 100%; }
+  .specimen { grid-template-columns: 1fr; gap: 8px; }
+  .stage.split.stack-sm { grid-template-columns: 1fr; }
+  .verdicts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .swatches { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .swatch .chipcolor { height: 72px; }
+  .swatch .info { padding: 10px 12px 12px; }
+  .verdict .stage { min-height: 140px; padding: 14px; }
+  .verdict .stage img, .verdict .stage svg { width: 72px; height: 72px; }
+  .verdict p { padding: 10px 10px 12px; font-size: 0.85rem; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .swatch .chipcolor .state { transition: none; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the kit</a>
+
+<!-- Icons reused through <use>: download, check, cross -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-yes" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.5 3 3 6-6.5"/></symbol>
+  <symbol id="i-no" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8.5 8.5 7 7"/><path d="m15.5 8.5-7 7"/></symbol>
+</svg>
+
+<div class="sky">
+  <div class="wrap">
+    <nav aria-label="Main">
+      <a class="brand" href="../">
+        <svg viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="n-sky" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#11153A"/><stop offset="0.515" stop-color="#341B58"/><stop offset="0.516" stop-color="#0D0F2A"/><stop offset="1" stop-color="#060818"/></linearGradient>
+            <linearGradient id="n-sun" x1="0" y1="144" x2="0" y2="264" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE7A3"/><stop offset="0.45" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <linearGradient id="n-rows" x1="136" y1="0" x2="376" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <mask id="n-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask>
+          </defs>
+          <rect width="512" height="512" rx="112" fill="url(#n-sky)"/>
+          <circle cx="256" cy="264" r="120" fill="url(#n-sun)" mask="url(#n-cut)"/>
+          <rect x="56" y="260" width="400" height="8" rx="4" fill="#FFF4E6"/>
+          <g fill="url(#n-rows)"><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.9"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.36"/></g>
+        </svg>
+        <span>Horizon<b class="sunword">DB</b></span>
+      </a>
+      <div class="links">
+        <a href="../">Home</a>
+        <a href="../docs/">Docs</a>
+        <a href="../benchmarks/">Benchmarks</a>
+        <a href="./" aria-current="page">Brand</a>
+        <a href="https://gitlab.com/ihrz/db">GitLab</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <p class="eyebrow">Press kit · logos · copy</p>
+      <h1>Brand &amp; press kit</h1>
+      <p class="lede">Everything you need to write about HorizonDB or show it on your project: the mark, the colours, the words, and the facts behind them.</p>
+      <div class="ctas">
+        <a class="btn btn-sun" href="horizondb-brand-kit.zip" download>
+          <svg aria-hidden="true"><use href="#i-dl"/></svg>Download the full kit (.zip)
+        </a>
+        <a class="btn btn-ghost" href="#copy">Jump to the copy</a>
+      </div>
+    </header>
+  </div>
+  <div class="hero-sun" aria-hidden="true"></div>
+</div>
+
+<div class="horizon" role="presentation"></div>
+
+<main class="water" id="main">
+  <div class="wrap">
+    <nav class="toc" aria-label="On this page">
+      <a href="#logo">Logo</a>
+      <a href="#usage">Usage</a>
+      <a href="#colour">Colour</a>
+      <a href="#type">Type</a>
+      <a href="#copy">Copy</a>
+      <a href="#facts">Key facts</a>
+      <a href="#posts">Announcements</a>
+      <a href="#contact">Links</a>
+    </nav>
+  </div>
+
+  <!-- ===================== LOGO ===================== -->
+  <section class="wrap" id="logo" aria-labelledby="logo-title">
+    <div class="head">
+      <p class="eyebrow">The mark</p>
+      <h2 id="logo-title">A sunset that is also a database</h2>
+      <p>The mark carries its own dusk sky, so it works as is on dark and on light backgrounds. Use the files below rather than redrawing it: every SVG is self-contained, text already in outlines.</p>
+    </div>
+
+    <div class="grid">
+      <article class="card">
+        <div class="stage split">
+          <div class="stage dark"><img src="../assets/logo.svg" width="128" height="128" alt="HorizonDB mark on a dark background"></div>
+          <div class="stage light"><img src="../assets/logo.svg" width="128" height="128" alt="HorizonDB mark on a light background"></div>
+        </div>
+        <div class="card-body">
+          <h3>Mark</h3>
+          <p>The default. Avatars, favicons, app icons, docs. Legible down to 16 px.</p>
+          <p class="meta">512 × 512 · tile with its own background</p>
+          <div class="dl">
+            <a href="../assets/logo.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>SVG</a>
+            <a href="../assets/logo.png" download><svg aria-hidden="true"><use href="#i-dl"/></svg>PNG 512</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="stage split">
+          <div class="stage dark" style="color:#FFF7EE">
+            <svg viewBox="36 40 440 440" width="120" height="120" fill="currentColor" role="img" aria-label="Single-colour HorizonDB mark in Paper on dark">
+              <defs><mask id="m1-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask></defs>
+              <circle cx="256" cy="264" r="120" mask="url(#m1-cut)"/><rect x="56" y="260" width="400" height="8" rx="4"/><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+            </svg>
+          </div>
+          <div class="stage light" style="color:#11153A">
+            <svg viewBox="36 40 440 440" width="120" height="120" fill="currentColor" role="img" aria-label="Single-colour HorizonDB mark in Dusk Indigo on light">
+              <defs><mask id="m2-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask></defs>
+              <circle cx="256" cy="264" r="120" mask="url(#m2-cut)"/><rect x="56" y="260" width="400" height="8" rx="4"/><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card-body">
+          <h3>Mono</h3>
+          <p>No tile, one colour (<code>currentColor</code>). Print, masks, favicons on a background you control.</p>
+          <p class="meta">SVG only · set the colour with CSS <code>color</code></p>
+          <div class="dl">
+            <a href="../assets/icon-mono.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>SVG</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card wide">
+        <div class="stage split stack-sm">
+          <div class="stage dark"><img src="../assets/wordmark.svg" width="360" height="67" alt="HorizonDB wordmark for dark backgrounds"></div>
+          <div class="stage white"><img src="../assets/wordmark-light.svg" width="360" height="67" alt="HorizonDB wordmark for light backgrounds"></div>
+        </div>
+        <div class="card-body">
+          <h3>Wordmark</h3>
+          <p>Mark and name side by side. Paper text for dark pages; Dusk Indigo text with an Ember to Rose "DB" for light pages.</p>
+          <p class="meta">600 × 112 · PNG at 1200 × 224, transparent</p>
+          <div class="dl">
+            <a href="../assets/wordmark.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Dark bg · SVG</a>
+            <a href="../assets/wordmark.png" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Dark bg · PNG</a>
+            <a href="../assets/wordmark-light.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Light bg · SVG</a>
+            <a href="../assets/wordmark-light.png" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Light bg · PNG</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="stage dark"><img src="../assets/banner.svg" width="1280" height="320" alt="HorizonDB banner: mark, wordmark and the tagline Memory above, PostgreSQL below" style="width:100%"></div>
+        <div class="card-body">
+          <h3>Banner</h3>
+          <p>Mark, wordmark and tagline. Top of a README or an article header.</p>
+          <p class="meta">1280 × 320 · self-contained SVG</p>
+          <div class="dl">
+            <a href="../assets/banner.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>SVG</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="stage dark"><img src="../assets/social.png" width="1280" height="640" alt="HorizonDB social preview image" loading="lazy" style="width:100%"></div>
+        <div class="card-body">
+          <h3>Social image</h3>
+          <p>Open Graph, link previews, repository social image.</p>
+          <p class="meta">1280 × 640</p>
+          <div class="dl">
+            <a href="../assets/social.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>SVG</a>
+            <a href="../assets/social.png" download><svg aria-hidden="true"><use href="#i-dl"/></svg>PNG</a>
+          </div>
+        </div>
+      </article>
+
+      <article class="card wide">
+        <div class="badges-demo">
+          <img src="../assets/badge-powered-by.svg" width="201" height="32" alt="Powered by HorizonDB badge, dark">
+          <span class="on-light"><img src="../assets/badge-powered-by-light.svg" width="201" height="32" alt="Powered by HorizonDB badge, light"></span>
+        </div>
+        <div class="card-body">
+          <h3>"Powered by HorizonDB" badge</h3>
+          <p>For a README, a status page or a footer. The Markdown snippet is in <a href="#badge-snippet">Announcements</a>.</p>
+          <p class="meta">201 × 32 · SVG, text in outlines</p>
+          <div class="dl">
+            <a href="../assets/badge-powered-by.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Dark · SVG</a>
+            <a href="../assets/badge-powered-by-light.svg" download><svg aria-hidden="true"><use href="#i-dl"/></svg>Light · SVG</a>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div class="story">
+      <figure>
+        <svg viewBox="0 0 512 512" role="img" aria-labelledby="story-svg-title">
+          <title id="story-svg-title">The HorizonDB mark with its three parts numbered: the sun, the horizon line, the reflection</title>
+          <defs>
+            <linearGradient id="s-sky" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#11153A"/><stop offset="0.515" stop-color="#341B58"/><stop offset="0.516" stop-color="#0D0F2A"/><stop offset="1" stop-color="#060818"/></linearGradient>
+            <linearGradient id="s-sun" x1="0" y1="144" x2="0" y2="264" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE7A3"/><stop offset="0.45" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <linearGradient id="s-rows" x1="136" y1="0" x2="376" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+            <mask id="s-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="5" fill="#000"/><rect y="232" width="512" height="7" fill="#000"/><rect y="250" width="512" height="9" fill="#000"/></mask>
+          </defs>
+          <rect width="512" height="512" rx="112" fill="url(#s-sky)"/>
+          <circle cx="256" cy="264" r="120" fill="url(#s-sun)" mask="url(#s-cut)"/>
+          <rect x="56" y="261" width="400" height="6" rx="3" fill="#FFF4E6"/>
+          <g fill="url(#s-rows)"><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.9"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.36"/></g>
+          <g font-family="Fira Mono, monospace" font-weight="500" font-size="26" text-anchor="middle">
+            <circle cx="256" cy="96" r="22" fill="#FFF7EE"/><text x="256" y="105" fill="#11153A">1</text>
+            <circle cx="474" cy="210" r="22" fill="#FFF7EE"/><text x="474" y="219" fill="#11153A">2</text>
+            <path d="M474 232v24" stroke="#FFF7EE" stroke-width="3"/>
+            <circle cx="256" cy="434" r="22" fill="#FFF7EE"/><text x="256" y="443" fill="#11153A">3</text>
+          </g>
+        </svg>
+      </figure>
+      <div>
+        <ol>
+          <li><span class="n" aria-hidden="true">1</span><p><strong>The sun is memory.</strong> Every read and every write lands there and answers from there. Its lower edge breaks into rows, thicker near the horizon: dirty keys on their way down.</p></li>
+          <li><span class="n" aria-hidden="true">2</span><p><strong>The horizon is the flush.</strong> The moment memory is written to disk, every <code>flush_interval_secs</code> and on shutdown.</p></li>
+          <li><span class="n" aria-hidden="true">3</span><p><strong>The reflection is PostgreSQL.</strong> The same rows, settled and quieter. Read as a stack, it is also the classic database symbol.</p></li>
+        </ol>
+        <p class="tagline">Memory above, <span class="sunword">PostgreSQL below.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== USAGE ===================== -->
+  <section class="wrap" id="usage" aria-labelledby="usage-title">
+    <div class="head">
+      <p class="eyebrow">Usage rules</p>
+      <h2 id="usage-title">Give it room, keep it dusk</h2>
+      <p>The mark is a sunset seen from one fixed point. Leave it as drawn and it reads at any size.</p>
+    </div>
+
+    <div class="rules">
+      <article class="card">
+        <div class="stage dark">
+          <div class="space-demo" role="img" aria-label="The mark surrounded by clear space equal to a quarter of its width on every side">
+            <span class="tick t-top" aria-hidden="true">¼ w</span>
+            <span class="tick t-left" aria-hidden="true">¼ w</span>
+            <img src="../assets/logo.svg" width="120" height="120" alt="">
+          </div>
+        </div>
+        <div class="card-body">
+          <h3>Clear space</h3>
+          <p>Keep at least a quarter of the mark's width free on every side: no text, edge or other logo inside it.</p>
+        </div>
+      </article>
+      <article class="card">
+        <div class="stage dark">
+          <div class="sizes">
+            <figure class="min"><img src="../assets/logo.svg" width="16" height="16" alt="Mark at 16 pixels"><figcaption>16 px min</figcaption></figure>
+            <figure><img src="../assets/logo.svg" width="32" height="32" alt="Mark at 32 pixels"><figcaption>32</figcaption></figure>
+            <figure><img src="../assets/logo.svg" width="48" height="48" alt="Mark at 48 pixels"><figcaption>48</figcaption></figure>
+            <figure><img src="../assets/logo.svg" width="96" height="96" alt="Mark at 96 pixels"><figcaption>96</figcaption></figure>
+          </div>
+        </div>
+        <div class="card-body">
+          <h3>Minimum sizes</h3>
+          <p>Mark: 16 px, where the rows still separate. Wordmark: 24 px tall, so "DB" keeps its gradient readable. Below that, use the mark alone.</p>
+        </div>
+      </article>
+    </div>
+
+    <h3 class="sub">Do and don't</h3>
+    <div class="verdicts">
+      <div class="verdict do">
+        <div class="stage dark"><img src="../assets/logo.svg" width="96" height="96" alt="Correct: the mark on a dark background"></div>
+        <p><svg aria-hidden="true"><use href="#i-yes"/></svg><span><strong>Do</strong> use the tiled mark as is, on dark…</span></p>
+      </div>
+      <div class="verdict do">
+        <div class="stage white"><img src="../assets/logo.svg" width="96" height="96" alt="Correct: the mark on a white background"></div>
+        <p><svg aria-hidden="true"><use href="#i-yes"/></svg><span><strong>Do</strong> …or on light: the tile brings its own sky.</span></p>
+      </div>
+      <div class="verdict dont">
+        <div class="stage dark"><img class="x-stretch" src="../assets/logo.svg" width="96" height="96" alt="Wrong: the mark stretched horizontally"></div>
+        <p><svg aria-hidden="true"><use href="#i-no"/></svg><span><strong>Don't</strong> stretch or squash it.</span></p>
+      </div>
+      <div class="verdict dont">
+        <div class="stage dark"><img class="x-recolour" src="../assets/logo.svg" width="96" height="96" alt="Wrong: the mark recoloured in green and blue"></div>
+        <p><svg aria-hidden="true"><use href="#i-no"/></svg><span><strong>Don't</strong> recolour it outside the palette.</span></p>
+      </div>
+      <div class="verdict dont">
+        <div class="stage dark"><img class="x-rotate" src="../assets/logo.svg" width="96" height="96" alt="Wrong: the mark rotated"></div>
+        <p><svg aria-hidden="true"><use href="#i-no"/></svg><span><strong>Don't</strong> rotate it: the horizon stays level.</span></p>
+      </div>
+      <div class="verdict dont">
+        <div class="stage dark">
+          <svg viewBox="0 0 512 512" role="img" aria-label="Wrong: the mark redrawn with a light daytime sky">
+            <defs>
+              <linearGradient id="d-sky" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#BFE0FF"/><stop offset="0.515" stop-color="#EAF5FF"/><stop offset="0.516" stop-color="#8CC4F0"/><stop offset="1" stop-color="#5A9BD6"/></linearGradient>
+              <linearGradient id="d-sun" x1="0" y1="144" x2="0" y2="264" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE7A3"/><stop offset="0.45" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+              <linearGradient id="d-rows" x1="136" y1="0" x2="376" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5A7A"/></linearGradient>
+              <mask id="d-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="5" fill="#000"/><rect y="232" width="512" height="7" fill="#000"/><rect y="250" width="512" height="9" fill="#000"/></mask>
+            </defs>
+            <rect width="512" height="512" rx="112" fill="url(#d-sky)"/>
+            <circle cx="256" cy="264" r="120" fill="url(#d-sun)" mask="url(#d-cut)"/>
+            <rect x="56" y="261" width="400" height="6" rx="3" fill="#FFFFFF"/>
+            <g fill="url(#d-rows)"><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.9"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.36"/></g>
+          </svg>
+        </div>
+        <p><svg aria-hidden="true"><use href="#i-no"/></svg><span><strong>Don't</strong> put the sun in a light sky: the mark is always dusk.</span></p>
+      </div>
+      <div class="verdict dont">
+        <div class="stage busy" style="color:#FFF7EE">
+          <svg viewBox="36 40 440 440" fill="currentColor" role="img" aria-label="Wrong: the single-colour mark lost on a busy mid-tone gradient">
+            <defs><mask id="m3-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask></defs>
+            <circle cx="256" cy="264" r="120" mask="url(#m3-cut)"/><rect x="56" y="260" width="400" height="8" rx="4"/><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+          </svg>
+        </div>
+        <p><svg aria-hidden="true"><use href="#i-no"/></svg><span><strong>Don't</strong> use the mono mark on busy or mid-tone backgrounds. Use the tiled mark there.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== COLOUR ===================== -->
+  <section class="wrap" id="colour" aria-labelledby="colour-title">
+    <div class="head">
+      <p class="eyebrow">Colour</p>
+      <h2 id="colour-title">One evening, seven colours</h2>
+      <p>Warm light above, deep water below. Click a swatch to copy its hex value.</p>
+    </div>
+    <div class="swatches">
+      <button type="button" class="swatch" data-copy="#FFE7A3" data-label="Dawn Gold #FFE7A3"><span class="chipcolor" style="background:#FFE7A3"><span class="state">Copy</span></span><span class="info"><span class="name">Dawn Gold</span><span class="hex">#FFE7A3</span><span class="role">Top of the sun, highlights.</span></span></button>
+      <button type="button" class="swatch" data-copy="#FFB347" data-label="Dawn Gold, deep #FFB347"><span class="chipcolor" style="background:#FFB347"><span class="state">Copy</span></span><span class="info"><span class="name">Dawn Gold, deep</span><span class="hex">#FFB347</span><span class="role">Middle of the sun, links on dark.</span></span></button>
+      <button type="button" class="swatch" data-copy="#FF7A45" data-label="Ember #FF7A45"><span class="chipcolor" style="background:#FF7A45"><span class="state">Copy</span></span><span class="info"><span class="name">Ember</span><span class="hex">#FF7A45</span><span class="role">Glow, warm accents, labels.</span></span></button>
+      <button type="button" class="swatch" data-copy="#FF5A7A" data-label="Horizon Rose #FF5A7A"><span class="chipcolor" style="background:#FF5A7A"><span class="state">Copy</span></span><span class="info"><span class="name">Horizon Rose</span><span class="hex">#FF5A7A</span><span class="role">Primary accent: the sun's base, the end of "DB".</span></span></button>
+      <button type="button" class="swatch" data-copy="#11153A" data-label="Dusk Indigo #11153A"><span class="chipcolor" style="background:#11153A"><span class="state">Copy</span></span><span class="info"><span class="name">Dusk Indigo</span><span class="hex">#11153A</span><span class="role">Sky, backgrounds, badge labels.</span></span></button>
+      <button type="button" class="swatch" data-copy="#2A1A55" data-label="Dusk Indigo, low #2A1A55"><span class="chipcolor" style="background:#2A1A55"><span class="state">Copy</span></span><span class="info"><span class="name">Dusk Indigo, low</span><span class="hex">#2A1A55</span><span class="role">The sky just above the horizon.</span></span></button>
+      <button type="button" class="swatch" data-copy="#0D0F2A" data-label="Deep Water #0D0F2A"><span class="chipcolor" style="background:#0D0F2A"><span class="state">Copy</span></span><span class="info"><span class="name">Deep Water</span><span class="hex">#0D0F2A</span><span class="role">Just below the horizon. Surfaces.</span></span></button>
+      <button type="button" class="swatch" data-copy="#060818" data-label="Deep Water, bottom #060818"><span class="chipcolor" style="background:#060818"><span class="state">Copy</span></span><span class="info"><span class="name">Deep Water, bottom</span><span class="hex">#060818</span><span class="role">The darkest surface, page background.</span></span></button>
+      <button type="button" class="swatch" data-copy="#FFF7EE" data-label="Paper #FFF7EE"><span class="chipcolor" style="background:#FFF7EE"><span class="state">Copy</span></span><span class="info"><span class="name">Paper</span><span class="hex">#FFF7EE</span><span class="role">Text on dark, the horizon line.</span></span></button>
+      <button type="button" class="swatch" data-copy="#B9B3DA" data-label="Haze #B9B3DA"><span class="chipcolor" style="background:#B9B3DA"><span class="state">Copy</span></span><span class="info"><span class="name">Haze</span><span class="hex">#B9B3DA</span><span class="role">Secondary text on dark.</span></span></button>
+    </div>
+
+    <h3 class="sub">Gradients</h3>
+    <div class="gradients">
+      <button type="button" class="swatch" data-copy="linear-gradient(180deg, #FFE7A3, #FFB347 45%, #FF5A7A)" data-label="Sun gradient"><span class="chipcolor" style="background:linear-gradient(180deg,#FFE7A3,#FFB347 45%,#FF5A7A)"><span class="state">Copy CSS</span></span><span class="info"><span class="name">Sun, vertical</span><span class="hex">#FFE7A3 → #FFB347 → #FF5A7A</span><span class="role">The brand gradient, top to bottom like the sun.</span></span></button>
+      <button type="button" class="swatch" data-copy="linear-gradient(90deg, #FFC75F, #FF5A7A)" data-label="Horizontal gradient"><span class="chipcolor" style="background:linear-gradient(90deg,#FFC75F,#FF5A7A)"><span class="state">Copy CSS</span></span><span class="info"><span class="name">Sun, horizontal</span><span class="hex">#FFC75F → #FF5A7A</span><span class="role">The "DB" of the wordmark, reflection rows, primary buttons.</span></span></button>
+      <button type="button" class="swatch" data-copy="linear-gradient(180deg, #11153A, #2A1A55)" data-label="Sky gradient"><span class="chipcolor" style="background:linear-gradient(180deg,#11153A,#2A1A55)"><span class="state">Copy CSS</span></span><span class="info"><span class="name">Sky</span><span class="hex">#11153A → #2A1A55</span><span class="role">Above the horizon.</span></span></button>
+      <button type="button" class="swatch" data-copy="linear-gradient(180deg, #0D0F2A, #060818)" data-label="Water gradient"><span class="chipcolor" style="background:linear-gradient(180deg,#0D0F2A,#060818)"><span class="state">Copy CSS</span></span><span class="info"><span class="name">Deep Water</span><span class="hex">#0D0F2A → #060818</span><span class="role">Below the horizon.</span></span></button>
+    </div>
+  </section>
+
+  <!-- ===================== TYPE ===================== -->
+  <section class="wrap" id="type" aria-labelledby="type-title">
+    <div class="head">
+      <p class="eyebrow">Typography</p>
+      <h2 id="type-title">Fira Sans for words, Fira Mono for labels</h2>
+      <p>Both under the SIL Open Font License 1.1, both on <a href="https://fonts.google.com/specimen/Fira+Sans">Google Fonts</a>. The logo files never need them: their text is in outlines.</p>
+    </div>
+    <div class="specimens">
+      <div class="specimen"><span class="label">Sans ExtraBold 800</span><span class="sample" style="font:800 clamp(1.8rem,4.6vw,2.6rem)/1.1 var(--f-display);letter-spacing:-0.02em">Memory above.</span></div>
+      <div class="specimen"><span class="label">Sans Bold 700</span><span class="sample" style="font:700 clamp(1.5rem,3.6vw,2rem)/1.15 var(--f-display);letter-spacing:-0.01em">PostgreSQL below.</span></div>
+      <div class="specimen"><span class="label">Sans Medium / Regular</span><span class="sample" style="font:400 1.1rem/1.5 var(--f-body);color:var(--haze)">Every read and write answers from memory, then settles into PostgreSQL in batches.</span></div>
+      <div class="specimen"><span class="label">Mono Medium, caps</span><span class="sample" style="font:500 0.95rem/1.4 var(--f-mono);letter-spacing:0.14em;text-transform:uppercase;color:var(--ember)">flush every 300 s · 500 rows per upsert</span></div>
+    </div>
+
+    <div class="construct">
+      <article class="card">
+        <div class="stage dark" style="min-height:220px">
+          <div style="text-align:center">
+            <span class="wm-big" aria-label="HorizonDB">Horizon<b class="sunword">DB</b></span>
+            <div class="wm-parts" aria-hidden="true"><span>"Horizon" · Bold 700</span><span>"DB" · ExtraBold 800</span><span>tracking −0.025 em</span><span>#FFC75F → #FF5A7A</span></div>
+          </div>
+        </div>
+        <div class="card-body">
+          <h3>The wordmark</h3>
+          <p>"Horizon" in Fira Sans Bold, tightly tracked; "DB" in ExtraBold, filled with the horizontal sun gradient. Never retype it for a logo: use the wordmark files.</p>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-body" style="padding:24px 22px">
+          <h3>Writing the name</h3>
+          <p>One word, capital H, capital DB. In running text, no gradient and no special weight.</p>
+          <ul class="names">
+            <li class="yes"><svg aria-label="Correct"><use href="#i-yes"/></svg><strong>HorizonDB</strong></li>
+            <li class="no"><svg aria-label="Wrong"><use href="#i-no"/></svg><span>Horizon DB</span></li>
+            <li class="no"><svg aria-label="Wrong"><use href="#i-no"/></svg><span>HorizonDb</span></li>
+            <li class="no"><svg aria-label="Wrong"><use href="#i-no"/></svg><span>Horizon-DB</span></li>
+            <li class="no"><svg aria-label="Wrong"><use href="#i-no"/></svg><span>HORIZONDB</span></li>
+          </ul>
+          <p><small>The project it belongs to is <strong>iHorizon</strong>, the Discord bot. The client package is installed as <code>horizondb</code>.</small></p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== COPY ===================== -->
+  <section class="wrap" id="copy" aria-labelledby="copy-title">
+    <div class="head">
+      <p class="eyebrow">Boilerplate</p>
+      <h2 id="copy-title">Words you can paste</h2>
+      <p>Every sentence below is checked against the README and the design notes. Shorten freely; please don't add claims that aren't there.</p>
+    </div>
+    <div class="lang-grid">
+      <div class="copy-stack">
+        <p class="lang-head">English</p>
+        <div class="copy">
+          <header><span class="t">Tagline</span><button type="button" class="chip" data-copy-from="c-tag-en" data-label="English tagline">Copy</button></header>
+          <p class="text" id="c-tag-en">Memory above, PostgreSQL below.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">One-liner <span class="count" data-count="c-one-en"></span></span><button type="button" class="chip" data-copy-from="c-one-en" data-label="English one-liner">Copy</button></header>
+          <p class="text" id="c-one-en">HorizonDB: a Rust JSON key-value server over WebSocket. Memory above, PostgreSQL below.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">Short <span class="count" data-count="c-short-en"></span></span><button type="button" class="chip" data-copy-from="c-short-en" data-label="English short description">Copy</button></header>
+          <p class="text" id="c-short-en">HorizonDB is the key-value server behind iHorizon. Written in Rust, it answers every read and write from memory over a single WebSocket, then flushes your JSON documents to PostgreSQL in batches. Dot keys address inside documents, mutations return their result, and a zero-dependency TypeScript client for Bun speaks the protocol.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">Long <span class="count" data-count="c-long-en"></span></span><button type="button" class="chip" data-copy-from="c-long-en" data-label="English long description">Copy</button></header>
+          <p class="text" id="c-long-en">HorizonDB is a JSON key-value server written in Rust (edition 2024), built for the iHorizon Discord bot. A bot hammers a handful of large JSON documents from many shards at once: a SQL round trip on every write is too slow, and memory alone forgets on restart. HorizonDB sits on the line between the two.
+
+Every get, set, add and push is served from memory, behind a lock per document, and edits in place. Every few minutes a background task flushes the changed keys to plain PostgreSQL tables with batched UNNEST upserts; a graceful shutdown flushes everything first. Idle documents are packed about ten times smaller, and clean ones leave memory until they are needed again.
+
+Clients speak JSON over one WebSocket, with pipelined requests and answers that carry their result. A zero-dependency TypeScript client for Bun ships in the repository. The wire protocol may still change.</p>
+        </div>
+      </div>
+
+      <div class="copy-stack" lang="fr">
+        <p class="lang-head">Français</p>
+        <div class="copy">
+          <header><span class="t">Slogan</span><button type="button" class="chip" data-copy-from="c-tag-fr" data-label="Slogan en français">Copier</button></header>
+          <p class="text" id="c-tag-fr">La mémoire au-dessus, PostgreSQL en dessous.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">Une ligne <span class="count" data-count="c-one-fr"></span></span><button type="button" class="chip" data-copy-from="c-one-fr" data-label="Phrase d'accroche en français">Copier</button></header>
+          <p class="text" id="c-one-fr">HorizonDB : clé-valeur JSON en Rust sur WebSocket. La mémoire au-dessus, PostgreSQL en dessous.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">Court <span class="count" data-count="c-short-fr"></span></span><button type="button" class="chip" data-copy-from="c-short-fr" data-label="Description courte en français">Copier</button></header>
+          <p class="text" id="c-short-fr">HorizonDB est le serveur clé-valeur qui fait tourner iHorizon. Écrit en Rust, il répond à chaque lecture et écriture depuis la mémoire, sur un seul WebSocket, puis verse vos documents JSON dans PostgreSQL par lots. Les clés pointées adressent l'intérieur des documents, les mutations renvoient leur résultat, et un client TypeScript pour Bun, sans dépendance, parle le protocole.</p>
+        </div>
+        <div class="copy">
+          <header><span class="t">Long <span class="count" data-count="c-long-fr"></span></span><button type="button" class="chip" data-copy-from="c-long-fr" data-label="Description longue en français">Copier</button></header>
+          <p class="text" id="c-long-fr">HorizonDB est un serveur clé-valeur JSON écrit en Rust (édition 2024), conçu pour le bot Discord iHorizon. Un bot martèle quelques gros documents JSON depuis de nombreux shards en même temps : un aller-retour SQL à chaque écriture est trop lent, et un stockage purement en mémoire oublie tout au redémarrage. HorizonDB se tient sur la ligne entre les deux.
+
+Chaque get, set, add et push est servi depuis la mémoire, derrière un verrou par document, et modifie sur place. Toutes les quelques minutes, une tâche de fond verse les clés modifiées dans de simples tables PostgreSQL, par upserts UNNEST groupés ; un arrêt propre vide tout d'abord. Les documents inactifs sont compactés environ dix fois plus petits, et les documents propres quittent la mémoire jusqu'à leur prochain usage.
+
+Les clients parlent JSON sur un seul WebSocket, avec des requêtes en pipeline et des réponses qui portent leur résultat. Un client TypeScript pour Bun, sans dépendance, est livré dans le dépôt. Le protocole peut encore évoluer.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FACTS ===================== -->
+  <section class="wrap" id="facts" aria-labelledby="facts-title">
+    <div class="head">
+      <p class="eyebrow">Key facts</p>
+      <h2 id="facts-title">What you can say, and where it comes from</h2>
+      <p>Only things you can check in the repository. Numbers come with the conditions they were measured in.</p>
+    </div>
+    <dl class="facts">
+      <div class="fact"><dt>Language</dt><dd>Rust, edition 2024<small>Async Tokio. <code>unsafe</code> forbidden, clippy pedantic clean.</small></dd></div>
+      <div class="fact"><dt>Protocol</dt><dd>JSON over WebSocket<small>Requests correlated by <code>id</code>, up to 1 024 in flight per connection. Any language with a WebSocket can be a client.</small></dd></div>
+      <div class="fact"><dt>Storage</dt><dd>Write-behind to PostgreSQL<small>Writes land in memory first. Dirty keys are flushed every <code>flush_interval_secs</code> (default 300) with batched <code>UNNEST</code> upserts and <code>ANY</code> deletes, and on SIGINT/SIGTERM.</small></dd></div>
+      <div class="fact"><dt>Client</dt><dd>TypeScript SDK for Bun<small>Zero runtime dependencies. Re-logs on an expired session, reconnects with backoff, typed errors.</small></dd></div>
+      <div class="fact"><dt>Durability</dt><dd>A trade you choose<small>A crash or <code>kill -9</code> loses up to <code>flush_interval_secs</code> of writes. Say so when you describe it.</small></dd></div>
+      <div class="fact"><dt>Licence</dt><dd>See the repository<small>No licence file is published yet. Check <a href="https://gitlab.com/ihrz/db">gitlab.com/ihrz/db</a> before reusing the code.</small></dd></div>
+      <div class="fact"><dt>Resident memory, 200k idle documents</dt><dd><span class="big"><span class="from">2 703</span> → <span class="to">60 MiB</span></span><small>200 000 documents of about 1 KB of JSON each. Process RSS, release build, after 80 s idle: 2 703 MiB before the memory work, 60 MiB with idle eviction, 360 MiB with packing alone while every document stays in memory. Measured on the <code>perf/memory</code> branch.</small></dd></div>
+      <div class="fact"><dt>Idle document size</dt><dd><span class="big"><span class="from">11.2</span> → <span class="to">1.0 KB</span></span><small>Per document: parsed JSON tree versus packed JSON text, about 10x smaller. Packed after <code>pack_idle_secs</code> (default 120), parsed back in place on access.</small></dd></div>
+      <div class="fact"><dt>Project</dt><dd>Part of iHorizon<small>Built for and used by the iHorizon Discord bot. Work in progress: the wire protocol may still change.</small></dd></div>
+    </dl>
+
+    <h3 class="sub">Hot-path latency</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Path</th><th scope="col">Throughput</th><th scope="col">p50</th><th scope="col">p95</th></tr></thead>
+        <tbody>
+          <tr><td>hot <code>get</code>, one connection</td><td class="num hi">18.1 k ops/s</td><td class="num">42 µs</td><td class="num">67 µs</td></tr>
+          <tr><td><code>has</code>, one connection</td><td class="num hi">20.1 k ops/s</td><td class="num">39 µs</td><td class="num">53 µs</td></tr>
+          <tr><td>login + logout</td><td class="num hi">17.2 k ops/s</td><td class="num">43 µs</td><td class="num">66 µs</td></tr>
+          <tr><td>raw WebSocket client, same server</td><td class="num hi">48 k ops/s</td><td class="num">—</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">End to end through the SDK, network included. Linux laptop, consumer NVMe, PostgreSQL 16 in a container with <code>synchronous_commit=off</code>, Bun, Rust <em>debug</em> build, <code>--quick</code> profile. These are floor latencies on memory paths, not a write-throughput figure: plain <code>set</code> through the SDK degrades in long mixed runs, a known issue described on the <a href="../benchmarks/">benchmarks page</a>. Quote them with these conditions.</p>
+  </section>
+
+  <!-- ===================== POSTS ===================== -->
+  <section class="wrap" id="posts" aria-labelledby="posts-title">
+    <div class="head">
+      <p class="eyebrow">Ready to post</p>
+      <h2 id="posts-title">Announcement templates</h2>
+      <p>Paste, then adjust the tone to your community. The short posts stay under 280 characters with the link written in full.</p>
+    </div>
+
+    <div class="lang-grid">
+      <div class="copy-stack">
+        <p class="lang-head">English</p>
+        <div class="copy">
+          <header><span class="t">Discord</span><button type="button" class="chip" data-copy-from="p-discord-en" data-label="English Discord announcement">Copy</button></header>
+          <pre class="text code" id="p-discord-en">## HorizonDB: memory above, PostgreSQL below
+
+The key-value server behind iHorizon now has its own home.
+
+- **Memory first**: every get, set, add and push answers from memory, edited in place
+- **Write-behind**: changed keys are flushed to plain PostgreSQL tables in batches, and everything on a clean shutdown
+- **One WebSocket, JSON in and out**: mutations return their result, no follow-up read
+- **TypeScript client for Bun** with zero dependencies
+
+Written in Rust. Still a work in progress: the protocol may change.
+
+https://ihrz.gitlab.io/db/
+Code: &lt;https://gitlab.com/ihrz/db&gt;</pre>
+        </div>
+        <div class="copy">
+          <header><span class="t">X / Bluesky <span class="count" data-count="p-x-en" data-limit="280"></span></span><button type="button" class="chip" data-copy-from="p-x-en" data-label="English short post">Copy</button></header>
+          <pre class="text" id="p-x-en">HorizonDB is a JSON key-value server written in Rust. Reads and writes answer from memory over one WebSocket, then settle into PostgreSQL in batched upserts. TypeScript client for Bun, zero dependencies.
+
+Memory above, PostgreSQL below.
+https://ihrz.gitlab.io/db/</pre>
+        </div>
+        <div class="copy">
+          <header><span class="t">LinkedIn / Reddit</span><button type="button" class="chip" data-copy-from="p-long-en" data-label="English long post">Copy</button></header>
+          <pre class="text" id="p-long-en">HorizonDB: a JSON key-value server that keeps memory above and PostgreSQL below
+
+A Discord bot hammers a few large JSON documents (a guild, a member, a counter) from many shards at once. A SQL round trip on every write makes that slow; a pure in-memory store forgets everything on restart. HorizonDB, the server behind the iHorizon bot, sits on the line between the two.
+
+How it works:
+- Every read and write is served from memory. A push into a multi-megabyte document edits it in place instead of copying it.
+- Every flush_interval_secs (300 s by default), changed keys go down to plain PostgreSQL tables in batched UNNEST upserts. A graceful shutdown flushes everything first; a crash can lose up to one interval of writes, and you choose that interval.
+- Read-modify-write is serialized per key: sixteen workers on one counter end on the exact sum, checked on every benchmark run.
+- Idle documents are packed about ten times smaller in memory. In one measurement (release build, 200 000 documents of about 1 KB), resident memory after 80 s idle went from 2 703 MiB to 60 MiB with idle eviction, or 360 MiB with every document kept in memory.
+
+It is written in Rust (2024 edition, unsafe forbidden), speaks JSON over a single WebSocket, and ships a zero-dependency TypeScript client for Bun. Still a work in progress: the wire protocol may change.
+
+Landing page: https://ihrz.gitlab.io/db/
+Code and design notes: https://gitlab.com/ihrz/db</pre>
+        </div>
+      </div>
+
+      <div class="copy-stack" lang="fr">
+        <p class="lang-head">Français</p>
+        <div class="copy">
+          <header><span class="t">Discord</span><button type="button" class="chip" data-copy-from="p-discord-fr" data-label="Annonce Discord en français">Copier</button></header>
+          <pre class="text code" id="p-discord-fr">## HorizonDB : la mémoire au-dessus, PostgreSQL en dessous
+
+Le serveur clé-valeur qui fait tourner iHorizon a maintenant sa propre page.
+
+- **La mémoire d'abord** : chaque get, set, add et push répond depuis la mémoire, modifié sur place
+- **Write-behind** : les clés modifiées descendent par lots dans de simples tables PostgreSQL, et tout part à l'arrêt propre
+- **Un seul WebSocket, du JSON** : les mutations renvoient leur résultat, sans relecture
+- **Client TypeScript pour Bun**, sans dépendance
+
+Écrit en Rust. Toujours en chantier : le protocole peut encore changer.
+
+https://ihrz.gitlab.io/db/
+Code : &lt;https://gitlab.com/ihrz/db&gt;</pre>
+        </div>
+        <div class="copy">
+          <header><span class="t">X / Bluesky <span class="count" data-count="p-x-fr" data-limit="280"></span></span><button type="button" class="chip" data-copy-from="p-x-fr" data-label="Post court en français">Copier</button></header>
+          <pre class="text" id="p-x-fr">HorizonDB, serveur clé-valeur JSON en Rust. Lectures et écritures servies depuis la mémoire sur un seul WebSocket, puis versées dans PostgreSQL par lots. Client TypeScript pour Bun, zéro dépendance.
+
+La mémoire au-dessus, PostgreSQL en dessous.
+https://ihrz.gitlab.io/db/</pre>
+        </div>
+        <div class="copy">
+          <header><span class="t">LinkedIn / Reddit</span><button type="button" class="chip" data-copy-from="p-long-fr" data-label="Post long en français">Copier</button></header>
+          <pre class="text" id="p-long-fr">HorizonDB : un serveur clé-valeur JSON, la mémoire au-dessus et PostgreSQL en dessous
+
+Un bot Discord martèle quelques gros documents JSON (une guilde, un membre, un compteur) depuis de nombreux shards en même temps. Un aller-retour SQL à chaque écriture, c'est lent ; un stockage purement en mémoire oublie tout au redémarrage. HorizonDB, le serveur derrière le bot iHorizon, se tient sur la ligne entre les deux.
+
+Comment ça marche :
+- Chaque lecture et chaque écriture est servie depuis la mémoire. Un push dans un document de plusieurs mégaoctets le modifie sur place au lieu de le copier.
+- Toutes les flush_interval_secs (300 s par défaut), les clés modifiées descendent dans de simples tables PostgreSQL, par upserts UNNEST groupés. Un arrêt propre vide tout d'abord ; un crash peut perdre jusqu'à un intervalle d'écritures, et c'est vous qui le réglez.
+- Les lectures-modifications-écritures sont sérialisées par clé : seize workers sur un même compteur tombent pile sur la bonne somme, vérifié à chaque passe de benchmark.
+- Les documents inactifs sont compactés environ dix fois plus petits en mémoire. Sur une mesure (build release, 200 000 documents d'environ 1 Ko), la mémoire résidente après 80 s d'inactivité est passée de 2 703 Mio à 60 Mio avec l'éviction, ou 360 Mio en gardant tous les documents en mémoire.
+
+Il est écrit en Rust (édition 2024, unsafe interdit), parle JSON sur un seul WebSocket et fournit un client TypeScript pour Bun sans dépendance. Toujours en chantier : le protocole peut encore changer.
+
+Page du projet : https://ihrz.gitlab.io/db/
+Code et notes de conception : https://gitlab.com/ihrz/db</pre>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub" id="badge-snippet">README badge</h3>
+    <div class="lang-grid">
+      <div class="copy">
+        <header><span class="t">Markdown · dark badge</span><button type="button" class="chip" data-copy-from="b-md-dark" data-label="Markdown for the dark badge">Copy</button></header>
+        <div class="badges-demo"><img src="../assets/badge-powered-by.svg" width="201" height="32" alt="Powered by HorizonDB"></div>
+        <pre class="text code" id="b-md-dark">[![Powered by HorizonDB](https://ihrz.gitlab.io/db/assets/badge-powered-by.svg)](https://gitlab.com/ihrz/db)</pre>
+      </div>
+      <div class="copy">
+        <header><span class="t">Markdown · light badge</span><button type="button" class="chip" data-copy-from="b-md-light" data-label="Markdown for the light badge">Copy</button></header>
+        <div class="badges-demo"><span class="on-light"><img src="../assets/badge-powered-by-light.svg" width="201" height="32" alt="Powered by HorizonDB"></span></div>
+        <pre class="text code" id="b-md-light">[![Powered by HorizonDB](https://ihrz.gitlab.io/db/assets/badge-powered-by-light.svg)](https://gitlab.com/ihrz/db)</pre>
+      </div>
+      <div class="copy">
+        <header><span class="t">HTML</span><button type="button" class="chip" data-copy-from="b-html" data-label="HTML for the badge">Copy</button></header>
+        <pre class="text code" id="b-html">&lt;a href="https://gitlab.com/ihrz/db"&gt;&lt;img src="https://ihrz.gitlab.io/db/assets/badge-powered-by.svg" alt="Powered by HorizonDB" width="201" height="32"&gt;&lt;/a&gt;</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== CONTACT ===================== -->
+  <section class="wrap" id="contact" aria-labelledby="contact-title">
+    <div class="head">
+      <p class="eyebrow">Links</p>
+      <h2 id="contact-title">Where to look, where to ask</h2>
+      <p>Questions about the project or this kit: open an issue on the repository.</p>
+    </div>
+    <div class="links-grid">
+      <a class="link-card" href="https://gitlab.com/ihrz/db"><strong>Repository</strong><span>Source, README, design notes.</span><code>gitlab.com/ihrz/db</code></a>
+      <a class="link-card" href="https://gitlab.com/ihrz/db/-/issues"><strong>Issues</strong><span>Bugs, questions, press requests.</span><code>gitlab.com/ihrz/db/-/issues</code></a>
+      <a class="link-card" href="../docs/"><strong>Documentation</strong><span>Protocol, SDK, configuration.</span><code>ihrz.gitlab.io/db/docs/</code></a>
+      <a class="link-card" href="../"><strong>Landing page</strong><span>The one-page tour, with the live flush animation.</span><code>ihrz.gitlab.io/db/</code></a>
+      <a class="link-card" href="../benchmarks/"><strong>Benchmarks</strong><span>Method, full table, known issues.</span><code>ihrz.gitlab.io/db/benchmarks/</code></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="sig">
+      <svg viewBox="36 40 440 440" fill="currentColor" aria-hidden="true">
+        <defs><mask id="f-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="264" fill="#fff"/><rect y="214" width="512" height="6" fill="#000"/><rect y="232" width="512" height="8" fill="#000"/><rect y="250" width="512" height="10" fill="#000"/></mask></defs>
+        <circle cx="256" cy="264" r="120" mask="url(#f-cut)"/><rect x="56" y="260" width="400" height="8" rx="4"/><rect x="148" y="292" width="216" height="20" rx="10" opacity="0.85"/><rect x="182" y="328" width="148" height="18" rx="9" opacity="0.6"/><rect x="212" y="361" width="88" height="16" rx="8" opacity="0.4"/>
+      </svg>
+      <span>HorizonDB is part of the iHorizon project. Fonts: Fira Sans and Fira Mono, SIL OFL 1.1.</span>
+    </div>
+    <nav aria-label="Footer" class="links">
+      <a href="../">Home</a>
+      <a href="../docs/">Docs</a>
+      <a href="https://gitlab.com/ihrz/db">Repository</a>
+      <a href="horizondb-brand-kit.zip" download>Brand kit (.zip)</a>
+    </nav>
+  </div>
+</footer>
+
+<div class="sr-only" aria-live="polite" id="live"></div>
+
+<script>
+(() => {
+  const live = document.getElementById("live");
+  const fr = (el) => el.closest("[lang]")?.getAttribute("lang") === "fr";
+
+  // Copy to clipboard with visible and announced feedback; select the text when the clipboard is refused.
+  function copy(btn, text, sourceEl) {
+    const label = btn.dataset.label || "text";
+    const isFr = fr(btn);
+    const stateEl = btn.querySelector(".state") || btn;
+    const idle = stateEl.textContent;
+    const done = () => {
+      btn.dataset.state = "done";
+      stateEl.textContent = isFr ? "Copié" : "Copied";
+      live.textContent = (isFr ? "Copié : " : "Copied: ") + label;
+      clearTimeout(btn._t);
+      btn._t = setTimeout(() => { btn.dataset.state = ""; stateEl.textContent = idle; }, 1800);
+    };
+    const select = () => {
+      if (sourceEl) { const r = document.createRange(); r.selectNodeContents(sourceEl); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+      stateEl.textContent = isFr ? "Sélectionné" : "Selected";
+      live.textContent = (isFr ? "Copie refusée, texte sélectionné : " : "Clipboard refused, text selected: ") + label;
+    };
+    try { navigator.clipboard.writeText(text).then(done, select); } catch { select(); }
+  }
+
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copy(b, b.dataset.copy, b.querySelector(".hex"))));
+  document.querySelectorAll("[data-copy-from]").forEach((b) => {
+    const src = document.getElementById(b.dataset.copyFrom);
+    b.addEventListener("click", () => copy(b, src.textContent.trim(), src));
+  });
+
+  // Character and word counts, computed from the text that will actually be copied.
+  document.querySelectorAll("[data-count]").forEach((el) => {
+    const src = document.getElementById(el.dataset.count);
+    const text = src.textContent.trim();
+    const chars = Array.from(text).length;
+    const words = text.split(/\s+/).filter(Boolean).length;
+    const limit = Number(el.dataset.limit || 0);
+    const isFr = fr(el);
+    el.textContent = limit
+      ? `· ${chars} / ${limit}`
+      : `· ${words} ${isFr ? "mots" : "words"}, ${chars} ${isFr ? "car." : "chars"}`;
+  });
+})();
+</script>
+</body>
+</html>

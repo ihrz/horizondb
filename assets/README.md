@@ -7,6 +7,10 @@
 | `banner.svg` | 1280×320 banner: mark, wordmark, tagline. Top of the README. Self-contained (mark inlined, text in outlines), because a README `<img>` cannot load other files or fonts. |
 | `social.svg` / `social.png` | 1280×640 social preview (Open Graph, GitLab/GitHub social image, link embeds). |
 | `icon-mono.svg` | Single-colour mark without the tile, drawn in `currentColor`. Monochrome contexts, masks, print, favicons on a known background. |
+| `wordmark.svg` / `wordmark.png` | Horizontal lockup, mark + wordmark, for dark backgrounds: "Horizon" in Paper, "DB" in the horizontal brand gradient. Transparent, text in outlines (the banner's). PNG is 1200×224. |
+| `wordmark-light.svg` / `wordmark-light.png` | Same lockup for light backgrounds: "Horizon" in Dusk Indigo `#11153A`, "DB" in Ember → Horizon Rose (Dawn Gold disappears on white). The mark keeps its dusk tile. |
+| `badge-powered-by.svg` | 201×32 "Powered by HorizonDB" badge for READMEs and sites, on a Dusk Indigo pill. Label in Fira Mono Medium capitals, outlined. |
+| `badge-powered-by-light.svg` | The same badge on Paper, for light pages. |
 
 ## The mark
 
@@ -72,6 +76,11 @@ chromium --headless=new --hide-scrollbars --window-size=1280,640 \
   --screenshot=assets/social.png "file://$PWD/assets/social.svg"
 ```
 
-After any change to the mark, re-inline it in `banner.svg` and `social.svg`
-(copy the `<defs>` content and `<g id="hz-mark">`), and check it at 16, 32 and
+The wordmark PNGs are 2x renders of their SVGs on a transparent background
+(`--force-device-scale-factor=2 --default-background-color=00000000
+--window-size=600,112`, the SVG shown in a 600×112 `<img>`).
+
+After any change to the mark, re-inline it in `banner.svg`, `social.svg`, both
+wordmarks and both badges (copy the `<defs>` content and `<g id="hz-mark">`),
+and check it at 16, 32 and
 48 px on both a light and a dark background.
