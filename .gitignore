@@ -40,3 +40,5 @@ target
 *.pid
 *.log
 *.lock
+# documentation build output
+public/

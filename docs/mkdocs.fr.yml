@@ -1,0 +1,122 @@
+site_name: HorizonDB
+site_description: Serveur clé-valeur JSON sur WebSocket. La mémoire au-dessus, PostgreSQL en dessous.
+site_author: iHorizon
+site_url: https://ihrz.gitlab.io/db/docs/fr/
+copyright: HorizonDB fait partie du projet iHorizon.
+
+repo_url: https://gitlab.com/ihrz/db
+repo_name: ihrz/db
+edit_uri: -/edit/main/docs/fr/
+
+docs_dir: fr
+site_dir: ../public/docs/fr
+
+theme:
+  name: material
+  language: fr
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font:
+    text: Fira Sans
+    code: Fira Mono
+  palette:
+    scheme: slate
+    primary: custom
+    accent: custom
+  icon:
+    repo: fontawesome/brands/gitlab
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+
+extra_css:
+  - stylesheets/brand.css
+
+extra:
+  alternate:
+    - name: English
+      link: /db/docs/
+      lang: en
+    - name: Français
+      link: /db/docs/fr/
+      lang: fr
+  social:
+    - icon: material/weather-sunset
+      link: https://ihrz.gitlab.io/db/
+      name: Page d'accueil de HorizonDB
+    - icon: material/palette-outline
+      link: https://ihrz.gitlab.io/db/brand/
+      name: Kit de marque
+    - icon: material/chart-line
+      link: https://ihrz.gitlab.io/db/benchmarks/
+      name: Résultats des benchmarks
+    - icon: fontawesome/brands/gitlab
+      link: https://gitlab.com/ihrz/db
+      name: Code source sur GitLab
+
+plugins:
+  - search:
+      lang: fr
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: info
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: info
+    unrecognized_links: warn
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Accueil: index.md
+  - Démarrage: getting-started.md
+  - Guide:
+      - Configuration: configuration.md
+      - Architecture: architecture.md
+      - Exploitation: operations.md
+  - Référence:
+      - Protocole: protocol.md
+      - SDK TypeScript: sdk.md
+  - Benchmarks: benchmarks.md
+  - FAQ: faq.md

@@ -1,0 +1,290 @@
+/* HorizonDB brand for Material for MkDocs. Dark only: the mark is always dusk.
+   Palette and type from assets/README.md and site/index.html. */
+
+:root {
+  --hz-deep: #060818;
+  --hz-water: #0B0D26;
+  --hz-indigo: #11153A;
+  --hz-dusk: #2A1A55;
+  --hz-gold: #FFE7A3;
+  --hz-amber: #FFB347;
+  --hz-ember: #FF7A45;
+  --hz-rose: #FF5A7A;
+  --hz-paper: #FFF7EE;
+  --hz-haze: #B9B3DA;
+  --hz-mute: #8A84AE;
+  --hz-line: rgba(255, 244, 230, 0.12);
+  --hz-sun: linear-gradient(180deg, var(--hz-gold), var(--hz-amber) 45%, var(--hz-rose));
+  --hz-sun-x: linear-gradient(90deg, #FFC75F, var(--hz-rose));
+}
+
+[data-md-color-scheme="slate"] {
+  color-scheme: dark;
+
+  --md-default-bg-color: var(--hz-water);
+  --md-default-bg-color--light: rgba(11, 13, 38, 0.54);
+  --md-default-bg-color--lighter: rgba(11, 13, 38, 0.26);
+  --md-default-bg-color--lightest: rgba(11, 13, 38, 0.07);
+  --md-default-fg-color: rgba(255, 247, 238, 0.92);
+  --md-default-fg-color--light: rgba(185, 179, 218, 0.92);
+  --md-default-fg-color--lighter: rgba(185, 179, 218, 0.45);
+  --md-default-fg-color--lightest: rgba(185, 179, 218, 0.14);
+
+  --md-primary-fg-color: var(--hz-indigo);
+  --md-primary-fg-color--light: var(--hz-dusk);
+  --md-primary-fg-color--dark: var(--hz-deep);
+  --md-primary-bg-color: var(--hz-paper);
+  --md-primary-bg-color--light: rgba(255, 247, 238, 0.7);
+
+  --md-accent-fg-color: var(--hz-amber);
+  --md-accent-fg-color--transparent: rgba(255, 179, 71, 0.12);
+  --md-accent-bg-color: var(--hz-deep);
+  --md-accent-bg-color--light: rgba(6, 8, 24, 0.7);
+
+  --md-typeset-color: var(--md-default-fg-color);
+  --md-typeset-a-color: var(--hz-rose);
+  --md-typeset-mark-color: rgba(255, 179, 71, 0.3);
+  --md-typeset-table-color: var(--hz-line);
+  --md-typeset-table-color--light: rgba(255, 244, 230, 0.04);
+
+  --md-code-bg-color: var(--hz-indigo);
+  --md-code-fg-color: #EDE7F6;
+  --md-code-hl-color: var(--hz-amber);
+  --md-code-hl-color--light: rgba(255, 179, 71, 0.12);
+  --md-code-hl-keyword-color: var(--hz-rose);
+  --md-code-hl-string-color: var(--hz-gold);
+  --md-code-hl-number-color: var(--hz-amber);
+  --md-code-hl-function-color: #C8B6FF;
+  --md-code-hl-constant-color: var(--hz-ember);
+  --md-code-hl-name-color: var(--md-code-fg-color);
+  --md-code-hl-comment-color: var(--hz-mute);
+  --md-code-hl-generic-color: var(--hz-haze);
+  --md-code-hl-variable-color: var(--hz-haze);
+  --md-code-hl-operator-color: var(--hz-haze);
+  --md-code-hl-punctuation-color: var(--hz-haze);
+
+  --md-footer-bg-color: var(--hz-deep);
+  --md-footer-bg-color--dark: #04050F;
+  --md-footer-fg-color: var(--hz-paper);
+  --md-footer-fg-color--light: var(--hz-haze);
+  --md-footer-fg-color--lighter: var(--hz-mute);
+
+  --md-admonition-bg-color: rgba(17, 21, 58, 0.6);
+  --md-shadow-z1: 0 0.2rem 0.6rem rgba(0, 0, 0, 0.35);
+  --md-shadow-z2: 0 0.3rem 1rem rgba(0, 0, 0, 0.45);
+}
+
+body {
+  background: var(--hz-water);
+}
+
+/* Header: dusk sky, with the sun line as the horizon underneath. */
+.md-header {
+  background: linear-gradient(180deg, #0C1030, var(--hz-indigo));
+  box-shadow: none;
+}
+.md-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--hz-sun-x);
+}
+.md-header__topic:first-child {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.md-tabs {
+  background: var(--hz-indigo);
+  border-bottom: 1px solid var(--hz-line);
+}
+.md-tabs__link--active,
+.md-tabs__item--active .md-tabs__link {
+  color: var(--hz-amber);
+}
+.md-search__form {
+  background-color: rgba(255, 247, 238, 0.08);
+}
+
+/* Navigation */
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--hz-rose);
+}
+.md-nav__link:hover,
+.md-nav__link:focus {
+  color: var(--hz-amber);
+}
+
+/* Typeset */
+.md-typeset h1 {
+  color: var(--hz-paper);
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+.md-typeset h2 {
+  font-weight: 700;
+  border-top: 1px solid var(--hz-line);
+  padding-top: 1rem;
+}
+.md-typeset h2:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.md-typeset a:hover {
+  color: var(--hz-amber);
+}
+.md-typeset code {
+  border-radius: 4px;
+}
+.md-typeset :not(pre) > code {
+  color: var(--hz-paper);
+  background: rgba(42, 26, 85, 0.6);
+}
+.md-typeset pre > code {
+  border: 1px solid var(--hz-line);
+  border-radius: 6px;
+}
+.md-typeset table:not([class]) {
+  border: 1px solid var(--hz-line);
+  font-size: 0.72rem;
+}
+.md-typeset table:not([class]) th {
+  background: var(--hz-indigo);
+  color: var(--hz-paper);
+}
+.md-typeset kbd {
+  background: var(--hz-indigo);
+  color: var(--hz-paper);
+}
+
+/* Buttons */
+.md-typeset .md-button {
+  color: var(--hz-paper);
+  border-color: rgba(255, 247, 238, 0.35);
+  border-radius: 999px;
+}
+.md-typeset .md-button:hover,
+.md-typeset .md-button:focus {
+  color: var(--hz-deep);
+  background: var(--hz-amber);
+  border-color: var(--hz-amber);
+}
+.md-typeset .md-button--primary {
+  color: var(--hz-deep);
+  background: var(--hz-sun-x);
+  border: 0;
+}
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus {
+  color: var(--hz-deep);
+  background: var(--hz-gold);
+}
+
+/* Grid cards */
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  background: rgba(17, 21, 58, 0.72);
+  border: 1px solid var(--hz-line);
+  border-radius: 10px;
+}
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid > .card:hover {
+  border-color: rgba(255, 179, 71, 0.55);
+  box-shadow: var(--md-shadow-z2);
+}
+.md-typeset .grid.cards .lg {
+  color: var(--hz-amber);
+}
+
+/* Admonitions keep their semantic colours, on a dusk surface. */
+.md-typeset .admonition,
+.md-typeset details {
+  background-color: var(--md-admonition-bg-color);
+  border-radius: 8px;
+}
+
+/* Home hero */
+.hz-hero {
+  text-align: center;
+  padding: 1.5rem 0 1rem;
+  margin: 0 0 1.5rem;
+  border-bottom: 2px solid transparent;
+  border-image: var(--hz-sun-x) 1;
+  background:
+    radial-gradient(60% 70% at 50% 100%, rgba(255, 106, 94, 0.18), transparent 70%);
+}
+.hz-hero img {
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
+}
+.md-typeset .hz-hero h1 {
+  font-size: 2.6rem;
+  margin: 0.6rem 0 0.2rem;
+}
+.hz-tagline {
+  font-size: 1.15rem;
+  font-weight: 500;
+  background: var(--hz-sun-x);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin: 0 0 0.6rem;
+}
+.md-typeset .hz-hero p.hz-lead {
+  color: var(--hz-haze);
+  max-width: 36rem;
+  margin: 0 auto 1rem;
+}
+.hz-eyebrow {
+  font-family: var(--md-code-font-family);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hz-ember);
+}
+
+/* Mermaid on the dusk palette */
+.md-typeset .mermaid {
+  --md-mermaid-font-family: var(--md-text-font-family);
+  --md-mermaid-edge-color: var(--hz-haze);
+  --md-mermaid-node-bg-color: rgba(42, 26, 85, 0.65);
+  --md-mermaid-node-fg-color: var(--hz-paper);
+  --md-mermaid-label-bg-color: var(--hz-water);
+  --md-mermaid-label-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-actor-bg-color: rgba(42, 26, 85, 0.65);
+  --md-mermaid-sequence-actor-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-actor-border-color: var(--hz-rose);
+  --md-mermaid-sequence-actor-line-color: var(--hz-mute);
+  --md-mermaid-sequence-actorman-bg-color: var(--hz-indigo);
+  --md-mermaid-sequence-actorman-line-color: var(--hz-rose);
+  --md-mermaid-sequence-box-bg-color: rgba(17, 21, 58, 0.5);
+  --md-mermaid-sequence-box-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-label-bg-color: var(--hz-indigo);
+  --md-mermaid-sequence-label-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-loop-bg-color: rgba(17, 21, 58, 0.5);
+  --md-mermaid-sequence-loop-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-loop-border-color: var(--hz-amber);
+  --md-mermaid-sequence-message-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-message-line-color: var(--hz-haze);
+  --md-mermaid-sequence-note-bg-color: rgba(255, 179, 71, 0.15);
+  --md-mermaid-sequence-note-fg-color: var(--hz-paper);
+  --md-mermaid-sequence-note-border-color: var(--hz-amber);
+  --md-mermaid-sequence-number-bg-color: var(--hz-rose);
+  --md-mermaid-sequence-number-fg-color: var(--hz-deep);
+}
+
+/* Footer */
+.md-footer {
+  border-top: 2px solid transparent;
+  border-image: var(--hz-sun-x) 1;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .md-typeset .hz-hero h1 {
+    font-size: 2rem;
+  }
+}
