@@ -30,7 +30,9 @@ done
 docker exec "$CONTAINER" pg_isready -U horizon -h 127.0.0.1 -p "$PG_PORT" >/dev/null
 
 if [ ! -f config.toml ]; then
-  sed "s/^port = 5432$/port = ${PG_PORT}/" example.config.toml > config.toml
+  sed -e "s/^port = 5432$/port = ${PG_PORT}/" \
+    -e 's/^password = "change-me"$/password = "horizon"/' \
+    example.config.toml > config.toml
   echo "[dev-up] generated config.toml from example (db port ${PG_PORT})"
 fi
 

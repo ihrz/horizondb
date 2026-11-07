@@ -8,7 +8,7 @@ PROFILE="standard"
 EXTRA_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    --quick|--full) PROFILE="$arg";;
+    --quick|--full) PROFILE="${arg#--}";;
     *) EXTRA_ARGS+=("$arg");;
   esac
 done

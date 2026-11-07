@@ -107,7 +107,7 @@ await db.table("users").get("42.name");     // "Bob"
 
 - absent key, no default → `undefined`
 - absent key, default provided → the default
-- explicitly stored `null` → `null` (distinct from absence)
+- explicitly stored `null`, no default → `undefined`, like an absent key (`get` maps a `null` answer to `undefined`; `has` returns `false`)
 
 ### Errors
 

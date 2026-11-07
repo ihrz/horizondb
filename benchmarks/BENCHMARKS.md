@@ -48,8 +48,8 @@ Equivalent environment variables: `HORIZON_URL`, `HORIZON_USER`, `HORIZON_PASS`.
 | `has/sequential` | `has` | 1 connection, hot key | Same, existence path |
 | `set-small/sequential` | `set` | 1 connection, unique keys | Simple write throughput without concurrency |
 | `set-small/pipelined` | `set` | 16 conns × depth 32, unique keys | Saturated write throughput (pipelining) |
-| `add-counter/contented` | `add` | 16 workers on **a single key** | Optimistic-CAS behavior under maximum contention + **invariant**: final sum == number of increments |
-| `nested-merge/contented` | nested `add` | 16 workers on one document | Transactional JSON merge (CAS) + **invariant** |
+| `add-counter/contented` | `add` | 16 workers on **a single key** | Per-key write lock under maximum contention + **invariant**: final sum == number of increments |
+| `nested-merge/contented` | nested `add` | 16 workers on one document | In-place JSON merge under the per-key lock + **invariant** |
 | `mixed-workload/pipelined` | get/set/add/has/delete | 512 in-flight requests, rotation | Behavior under realistic mixed load |
 | `payload-Nkb/set+get` | `set`+`get` | 1 connection, large documents | Payload-size impact (1 / 64 / 512 KiB depending on profile) |
 | `all-scan/preloaded` | `all` | Preloaded table, then scans | Full-scan cost (server-limited to 10 000 rows) |
@@ -70,7 +70,7 @@ get-hot/sequential                 2.0k    0     18.1k       45       42       6
 - **ops/s**: average throughput over the scenario's wall duration
 - **avg/p50/p95/p99/max µs**: per-operation latency distribution (includes pipeline wait)
 
-Quick reading: low `p50` with high `p99` = latency tail (contention backoff or imminent timeout).
+Quick reading: low `p50` with high `p99` = latency tail (queueing on a contended key or imminent timeout).
 
 ## 5. Reference results
 
@@ -97,7 +97,7 @@ spike-burst/idle->flood            3.0k    0       168  2528263  2073883  621578
 
 ### Highlights
 - **Memory/auth paths: 17–20 k ops/s**, p50 ~40 µs.
-- **Protected contention (CAS)**: ~1 900 tps writing concurrently to one key, **without losing a single write** (invariants verified on every run).
+- **Protected contention (per-key lock)**: ~1 900 tps writing concurrently to one key, **without losing a single write** (invariants verified on every run).
 - **Payloads**: 1 300 ops/s at 1 KiB, 311 ops/s at 64 KiB (full set+get round trip).
 
 ## 6. Tuning and design
@@ -105,7 +105,7 @@ spike-burst/idle->flood            3.0k    0       168  2528263  2073883  621578
 | Setting | Where | Effect |
 |---|---|---|
 | `synchronous_commit=off` | dev-only PG container (set by `dev-up.sh`) | Removes fsync wait (~1.9 ms/commit on this NVMe) so numbers measure application throughput rather than disk floor |
-| CAS backoff (`db.rs`) | server | Exponential retry 1→25 ms on write conflict; guarantees progress without long lock queues |
+| Per-key write locks (`db.rs`) | server | 256 sharded mutexes: writers of one key run one after another, in place, with no retry; different keys rarely share a shard |
 | `max_message_size` | `[server]` config | Single message/frame ceiling (DoS protection); frame limit follows message limit |
 | SQL pool (`[database]`) | config | `max_connections` should cover `--concurrency` to avoid acquisition queuing |
 
