@@ -1,0 +1,36 @@
+{
+  "generatedAt": "2026-11-07T17:33:00Z",
+  "environment": {
+    "label": "Linux x86_64 laptop (8 threads), PostgreSQL 16 container, release build",
+    "notes": "One run per configuration. Other light jobs (documentation builds) shared the machine."
+  },
+  "workload": {
+    "documents": 200000,
+    "avgJsonBytes": 971,
+    "totalJson": "185 MB",
+    "shape": "guild-like object: settings, 12 member objects, 8 role ids, nested xp and welcome blocks",
+    "timeline": "load all, flush (5 s interval), 80 s without traffic, read 2000 random keys back, rewrite 10%, restart, read back",
+    "verification": "every read compared to the generated document: 0 mismatches in every configuration, before and after restart"
+  },
+  "configurations": [
+    { "id": "main", "label": "main (before)", "pack_idle_secs": null, "idle_eviction_secs": null,
+      "rssMiB": { "afterLoad": 2691, "afterIdle": 2703, "afterColdReads": 2703 } },
+    { "id": "evict", "label": "Eviction only", "pack_idle_secs": 0, "idle_eviction_secs": 30,
+      "rssMiB": { "afterLoad": 2453, "afterIdle": 60, "afterColdReads": 79 } },
+    { "id": "pack", "label": "Packing only (all documents stay in memory)", "pack_idle_secs": 30, "idle_eviction_secs": 0,
+      "rssMiB": { "afterLoad": 2359, "afterIdle": 417, "afterColdReads": 437 } },
+    { "id": "both", "label": "Packing + eviction", "pack_idle_secs": 30, "idle_eviction_secs": 60,
+      "rssMiB": { "afterLoad": 2355, "afterIdle": 360, "afterColdReads": 378 } }
+  ],
+  "representation": {
+    "documents": 20000,
+    "jsonBytesPerDoc": 936,
+    "bytesPerDoc": [
+      { "id": "indexmap", "label": "serde_json Value, preserve_order (IndexMap)", "bytes": 15649 },
+      { "id": "btreemap", "label": "serde_json Value, default (BTreeMap) - hot form", "bytes": 11224 },
+      { "id": "compact", "label": "Custom compact tree, interned keys (not used)", "bytes": 3316 },
+      { "id": "packed", "label": "Packed JSON text - idle form", "bytes": 1035 }
+    ],
+    "parseBack": { "smallDocMicros": 4.2, "largeDocKiB": 868, "largeDocMillis": 6.69 }
+  }
+}

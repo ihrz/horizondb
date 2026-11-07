@@ -267,6 +267,29 @@ try {
   printResults(results);
   const totalErrors = results.reduce((sum, row) => sum + row.errors, 0);
   const totalOps = results.reduce((sum, row) => sum + row.operations, 0);
+  if (options.jsonPath) {
+    const { password: _password, jsonPath, ...settings } = options;
+    await Bun.write(
+      jsonPath,
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          settings,
+          environment: {
+            bun: Bun.version,
+            platform: `${process.platform}-${process.arch}`,
+            label: process.env.BENCH_LABEL ?? null,
+          },
+          totalOps,
+          totalErrors,
+          results,
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(`[bench] results written to ${jsonPath}`);
+  }
   console.log("");
   console.log(
     `[bench] ${totalOps} operations measured, ${totalErrors} errors`,

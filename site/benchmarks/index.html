@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HorizonDB Benchmarks</title>
+<meta name="description" content="Measured latency, throughput and memory of HorizonDB, with the raw results and how to reproduce them.">
+<meta property="og:title" content="HorizonDB Benchmarks">
+<meta property="og:description" content="Measured latency, throughput and memory of HorizonDB, with the raw results and how to reproduce them.">
+<meta property="og:image" content="../assets/social.png">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500&family=Fira+Sans:wght@400;500;700;800&display=swap">
+<style>
+/* Same dusk tokens as the landing page (site/index.html). Dark only, by design. */
+:root {
+  color-scheme: dark;
+  --sky-top: #0C1030;
+  --sky: #1A1645;
+  --dusk: #2A1A55;
+  --water: #0B0D26;
+  --deep: #060818;
+  --paper: #FFF7EE;
+  --haze: #B9B3DA;
+  --mute: #8A84AE;
+  --gold: #FFE7A3;
+  --amber: #FFB347;
+  --ember: #FF7A45;
+  --rose: #FF5A7A;
+  --line: rgba(255, 244, 230, 0.12);
+  --panel: #11153A;
+  --sun-x: linear-gradient(90deg, #FFC75F, var(--rose));
+  /* Chart tokens, validated on --panel (dataviz validate_palette.js, ordinal):
+     p50 -> p99 is one hue, light to dark, 5.95:1 at the dark end. */
+  --mark: #F0703F;
+  --mark-light: #FFD08A;
+  --context: #8A84AE;
+  --grid: rgba(255, 244, 230, 0.10);
+  --f-body: "Fira Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "Fira Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--deep); color: var(--paper); font: 400 1.0625rem/1.6 var(--f-body); -webkit-font-smoothing: antialiased; }
+a { color: var(--amber); text-underline-offset: 3px; }
+a:hover { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+code, pre { font-family: var(--f-mono); }
+h1, h2, h3 { margin: 0; line-height: 1.1; text-wrap: balance; }
+p { margin: 0; }
+.wrap { width: 100%; max-width: 1120px; margin-inline: auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.eyebrow { font: 500 0.8125rem/1.4 var(--f-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ember); }
+.sunword { background: var(--sun-x); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.sky { background: radial-gradient(60% 60% at 50% 100%, rgba(255, 106, 94, 0.18), transparent 70%), linear-gradient(180deg, var(--sky-top), var(--sky) 60%, var(--dusk)); }
+nav { padding-block: 20px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--paper); font: 700 1.25rem/1 var(--f-body); }
+.brand img { width: 36px; height: 36px; }
+.brand b { font-weight: 800; }
+nav .links { margin-left: auto; display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.8125rem; }
+nav .links a { color: var(--haze); text-decoration: none; }
+nav .links a:hover, nav .links a[aria-current] { color: var(--paper); }
+.hero { padding-block: clamp(28px, 6vw, 64px) clamp(36px, 6vw, 64px); display: grid; gap: 16px; }
+.hero h1 { font-size: clamp(2.4rem, 6vw, 4rem); font-weight: 800; letter-spacing: -0.03em; }
+.hero .lede { color: var(--haze); font-size: 1.2rem; max-width: 60ch; }
+.horizon { height: 2px; background: linear-gradient(90deg, transparent, rgba(255, 244, 230, 0.35) 20%, #fff 50%, rgba(255, 244, 230, 0.35) 80%, transparent); }
+
+.water { background: linear-gradient(180deg, var(--water), var(--deep) 480px); }
+section { padding-block: clamp(48px, 8vw, 88px); }
+section + section { border-top: 1px solid var(--line); }
+.head { display: grid; gap: 10px; max-width: 66ch; margin-bottom: 32px; }
+.head h2 { font-size: clamp(1.8rem, 4vw, 2.5rem); font-weight: 800; letter-spacing: -0.02em; }
+.head p { color: var(--haze); }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
+.tile { background: rgba(17, 21, 58, 0.8); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.tile .label { color: var(--haze); font-size: 0.9rem; }
+.tile .value { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.tile .sub { color: var(--mute); font-size: 0.85rem; }
+.tile.hero-tile { grid-column: 1 / -1; }
+.tile.hero-tile .value { font-size: clamp(2.6rem, 8vw, 4rem); font-weight: 800; }
+.tile.hero-tile .value .to { color: var(--mute); font-weight: 400; margin-inline: 0.25em; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: clamp(16px, 3vw, 28px); min-width: 0; }
+.card + .card { margin-top: 24px; }
+.card h3 { font-size: 1.15rem; font-weight: 700; }
+.card .desc { color: var(--haze); font-size: 0.95rem; margin-top: 6px; max-width: 70ch; }
+.chart { position: relative; margin-top: 18px; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg text { font-family: var(--f-body); }
+.chart .tick { fill: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .cat { fill: var(--paper); font-size: 13px; }
+.chart .val { fill: var(--haze); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:focus { outline: none; }
+.chart g.row:hover .hover-band, .chart g.row:focus-within .hover-band { fill: rgba(255, 244, 230, 0.05); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; color: var(--haze); font-size: 0.85rem; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend i.bar { width: 14px; height: 10px; border-radius: 2px; }
+.tip { position: absolute; pointer-events: none; background: #1B1F4A; border: 1px solid rgba(255, 244, 230, 0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; min-width: 160px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); opacity: 0; transition: opacity 0.1s; z-index: 2; }
+.tip.on { opacity: 1; }
+.tip .t { color: var(--haze); margin-bottom: 6px; }
+.tip .r { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tip .r b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tip .r span { color: var(--haze); display: inline-flex; align-items: center; gap: 6px; }
+.tip .r span i { width: 12px; height: 2px; display: inline-block; border-radius: 1px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; color: var(--amber); font-size: 0.9rem; }
+.table-wrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--haze); font-weight: 500; }
+.note { color: var(--mute); font-size: 0.85rem; margin-top: 14px; max-width: 80ch; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 24px; }
+pre { background: rgba(6, 8, 24, 0.7); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 0.85rem; line-height: 1.7; margin: 12px 0 0; }
+ul.facts { margin: 12px 0 0; padding-left: 1.2em; color: var(--haze); display: grid; gap: 6px; }
+.error { color: var(--rose); }
+footer { border-top: 1px solid var(--line); padding-block: 32px; color: var(--mute); font-size: 0.85rem; }
+footer .wrap { display: flex; gap: 16px 24px; flex-wrap: wrap; justify-content: space-between; }
+footer a { color: var(--haze); }
+@media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+</style>
+</head>
+<body>
+<header class="sky">
+  <div class="wrap">
+    <nav aria-label="Main">
+      <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="36" height="36"><span>Horizon<b class="sunword">DB</b></span></a>
+      <div class="links">
+        <a href="../">Home</a>
+        <a href="../docs/">Docs</a>
+        <a href="./" aria-current="page">Benchmarks</a>
+        <a href="../brand/">Brand</a>
+        <a href="https://gitlab.com/ihrz/db">GitLab</a>
+      </div>
+    </nav>
+    <div class="hero">
+      <p class="eyebrow">Measured, not promised</p>
+      <h1>Benchmarks</h1>
+      <p class="lede">Latency, throughput and memory of a real HorizonDB server on a real PostgreSQL, through the official SDK. Every number on this page comes from the JSON files it links, and every run is reproducible with one command.</p>
+    </div>
+    <div class="kpis" id="kpis" aria-live="polite"></div>
+    <div style="height: clamp(32px, 6vw, 56px)"></div>
+  </div>
+  <div class="horizon" aria-hidden="true"></div>
+</header>
+
+<main class="water">
+  <section class="wrap" id="memory" aria-labelledby="memory-title">
+    <div class="head">
+      <p class="eyebrow">Memory</p>
+      <h2 id="memory-title">RAM follows what is in use, not what was ever read</h2>
+      <p>A parsed JSON tree costs many times its text. HorizonDB packs documents that went quiet back to compact JSON text, and drops the clean ones nobody touches from memory: PostgreSQL already holds them.</p>
+    </div>
+    <div class="card">
+      <h3>Server RSS after 80 s without traffic</h3>
+      <p class="desc" id="mem-desc">200,000 documents loaded, flushed, then left alone. Lower is better.</p>
+      <div class="chart" id="chart-rss" role="img"></div>
+      <details>
+        <summary>Show the data table</summary>
+        <div class="table-wrap"><table id="table-rss"></table></div>
+      </details>
+    </div>
+    <div class="card">
+      <h3>Memory per document, by in-memory representation</h3>
+      <p class="desc" id="repr-desc">Same documents, measured with the allocator's own counters. Hot documents use the parsed tree; idle ones the packed text.</p>
+      <div class="chart" id="chart-repr" role="img"></div>
+      <details>
+        <summary>Show the data table</summary>
+        <div class="table-wrap"><table id="table-repr"></table></div>
+      </details>
+      <p class="note" id="repr-note"></p>
+    </div>
+  </section>
+
+  <section class="wrap" id="latency" aria-labelledby="latency-title">
+    <div class="head">
+      <p class="eyebrow">Latency and throughput</p>
+      <h2 id="latency-title">Tens of microseconds on the hot path</h2>
+      <p>End-to-end through the TypeScript SDK over WebSocket: network, server work and, on cold paths, PostgreSQL. Pipelined scenarios keep hundreds of requests in flight on purpose, so their per-request latency includes queueing.</p>
+    </div>
+    <div class="card">
+      <h3>Request latency per scenario, p50 to p99</h3>
+      <p class="desc">Logarithmic scale. The line spans the median to the 99th percentile of each scenario.</p>
+      <div class="chart" id="chart-lat" role="img"></div>
+      <div class="legend" aria-hidden="true">
+        <span><i style="background: var(--mark-light)"></i>p50 (median)</span>
+        <span><i style="background: var(--mark)"></i>p99</span>
+      </div>
+      <details>
+        <summary>Show the data table</summary>
+        <div class="table-wrap"><table id="table-lat"></table></div>
+      </details>
+    </div>
+    <div class="card">
+      <h3>Throughput per scenario</h3>
+      <p class="desc">Operations per second over the scenario's wall time. Higher is better.</p>
+      <div class="chart" id="chart-ops" role="img"></div>
+    </div>
+    <p class="note" id="env-note"></p>
+  </section>
+
+  <section class="wrap" id="reproduce" aria-labelledby="repro-title">
+    <div class="head">
+      <p class="eyebrow">Reproduce</p>
+      <h2 id="repro-title">Run them on your machine</h2>
+      <p>Numbers from one laptop are a shape, not a promise: run the suite where you deploy.</p>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Latency suite</h3>
+        <p class="desc">Starts PostgreSQL in a container, builds and starts the server, runs every scenario. <code>--json</code> writes the file this page reads.</p>
+<pre>./scripts/dev-up.sh
+bun benchmarks/bench.ts --profile standard \
+  --json benchmarks/results/latest.json</pre>
+        <ul class="facts">
+          <li>Scenario catalog and options: <a href="https://gitlab.com/ihrz/db/-/blob/main/benchmarks/BENCHMARKS.md">BENCHMARKS.md</a></li>
+          <li>On GitLab CI: the manual <code>bench</code> job runs it against a PostgreSQL service.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Raw results</h3>
+        <p class="desc">Everything plotted here, untouched.</p>
+        <ul class="facts">
+          <li><a href="results/latest.json">results/latest.json</a>: latency and throughput suite</li>
+          <li><a href="results/memory.json">results/memory.json</a>: memory runs and per-document measurements</li>
+          <li>Memory settings: <code>pack_idle_secs</code> and <code>idle_eviction_secs</code> in the <a href="../docs/">configuration docs</a></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>HorizonDB, part of <a href="https://gitlab.com/ihrz">iHorizon</a>. Memory above, PostgreSQL below.</span>
+    <span><a href="../">Home</a> · <a href="../docs/">Docs</a> · <a href="../brand/">Brand kit</a> · <a href="https://gitlab.com/ihrz/db">Repository</a></span>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const fmtInt = (n) => Math.round(n).toLocaleString("en-US");
+  const fmtUs = (us) => us >= 1000 ? `${(us / 1000).toFixed(us >= 10000 ? 0 : 1)} ms` : `${Math.round(us)} µs`;
+  const fmtOps = (n) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : fmtInt(n);
+  const fmtBytes = (b) => b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`;
+
+  function el(tag, attrs = {}, parent) {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  function text(parent, x, y, value, cls, anchor = "start", baseline = "middle") {
+    const t = el("text", { x, y, class: cls, "text-anchor": anchor, "dominant-baseline": baseline }, parent);
+    t.textContent = value;
+    return t;
+  }
+  // Bar growing from x0 with a 4 px rounded data end and a square base.
+  function barPath(x0, y, w, h) {
+    const r = Math.min(4, w / 2, h / 2);
+    if (w <= 0) return "";
+    return `M${x0},${y}H${x0 + w - r}Q${x0 + w},${y} ${x0 + w},${y + r}V${y + h - r}Q${x0 + w},${y + h} ${x0 + w - r},${y + h}H${x0}Z`;
+  }
+
+  // One tooltip per chart. Rows: [label, value, color?]. textContent only.
+  function tooltip(container) {
+    const tip = document.createElement("div");
+    tip.className = "tip";
+    tip.setAttribute("role", "status");
+    container.appendChild(tip);
+    return {
+      show(title, rows, anchorX, anchorY) {
+        tip.replaceChildren();
+        const t = document.createElement("div");
+        t.className = "t";
+        t.textContent = title;
+        tip.appendChild(t);
+        for (const [label, value, color] of rows) {
+          const r = document.createElement("div");
+          r.className = "r";
+          const b = document.createElement("b");
+          b.textContent = value;
+          const s = document.createElement("span");
+          if (color) { const i = document.createElement("i"); i.style.background = color; s.appendChild(i); }
+          s.appendChild(document.createTextNode(label));
+          r.append(b, s);
+          tip.appendChild(r);
+        }
+        const cw = container.clientWidth;
+        tip.classList.add("on");
+        const tw = tip.offsetWidth;
+        tip.style.left = `${Math.max(0, Math.min(cw - tw, anchorX - tw / 2))}px`;
+        tip.style.top = `${Math.max(0, anchorY - tip.offsetHeight - 10)}px`;
+      },
+      hide() { tip.classList.remove("on"); },
+    };
+  }
+
+  function table(id, head, rows) {
+    const t = document.getElementById(id);
+    t.replaceChildren();
+    const thead = t.createTHead().insertRow();
+    for (const h of head) { const th = document.createElement("th"); th.scope = "col"; th.textContent = h; thead.appendChild(th); }
+    const body = t.createTBody();
+    for (const row of rows) {
+      const tr = body.insertRow();
+      row.forEach((cell, i) => {
+        const c = i === 0 ? document.createElement("th") : document.createElement("td");
+        if (i === 0) c.scope = "row";
+        c.textContent = cell;
+        tr.appendChild(c);
+      });
+    }
+  }
+
+  // Smallest "round" axis end at or above v whose quarter steps stay round.
+  function niceMax(v) {
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const m of [1, 1.2, 1.6, 2, 2.4, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p;
+    return 10 * p;
+  }
+
+  // Ranked horizontal bars. items: {label, value, emphasis, tip: rows}
+  function hbars(container, items, { format, axisFormat, ariaLabel, labelWidth }) {
+    container.replaceChildren();
+    container.setAttribute("aria-label", ariaLabel);
+    const width = Math.max(300, container.clientWidth);
+    const narrow = width < 560;
+    const lw = narrow ? 0 : labelWidth;
+    const rowH = narrow ? 52 : 36;
+    const barH = 18;
+    const top = 8, bottom = 28, right = 72;
+    const plotW = width - lw - right;
+    const height = top + items.length * rowH + bottom;
+    const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "presentation" }, container);
+    const max = niceMax(Math.max(...items.map((d) => d.value)));
+    const x = (v) => lw + (v / max) * plotW;
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) {
+      const v = (max / ticks) * i;
+      el("line", { x1: x(v), x2: x(v), y1: top, y2: height - bottom, stroke: css("--grid"), "stroke-width": 1 }, svg);
+      text(svg, x(v), height - bottom + 16, axisFormat(v), "tick", i === 0 ? "start" : i === ticks ? "end" : "middle");
+    }
+    const tip = tooltip(container);
+    items.forEach((d, i) => {
+      const y0 = top + i * rowH;
+      const g = el("g", { class: "row" }, svg);
+      el("rect", { x: 0, y: y0, width, height: rowH, class: "hover-band", fill: "transparent" }, g);
+      const by = narrow ? y0 + 24 : y0 + (rowH - barH) / 2;
+      if (narrow) text(g, 0, y0 + 11, d.label, "cat");
+      else text(g, lw - 12, by + barH / 2, d.label, "cat", "end");
+      el("path", { d: barPath(lw, by, Math.max(2, x(d.value) - lw), barH), fill: d.emphasis ? css("--mark") : css("--context") }, g);
+      text(g, x(d.value) + 8, by + barH / 2, format(d.value), "val");
+      const hit = el("rect", { x: 0, y: y0, width, height: rowH, class: "hit", tabindex: 0, "aria-label": `${d.label}: ${format(d.value)}` }, g);
+      const show = () => {
+        const scale = container.clientWidth / width;
+        tip.show(d.label, d.tip, x(d.value) * scale, by * scale);
+      };
+      hit.addEventListener("pointermove", show);
+      hit.addEventListener("focus", show);
+      hit.addEventListener("pointerleave", () => tip.hide());
+      hit.addEventListener("blur", () => tip.hide());
+    });
+  }
+
+  // Dumbbell on a log scale: p50 dot -> p99 dot per scenario.
+  function dumbbell(container, items, ariaLabel) {
+    container.replaceChildren();
+    container.setAttribute("aria-label", ariaLabel);
+    const width = Math.max(300, container.clientWidth);
+    const narrow = width < 560;
+    const lw = narrow ? 0 : 210;
+    const rowH = narrow ? 50 : 34;
+    const top = 8, bottom = 28, right = 64;
+    const plotW = width - lw - right;
+    const height = top + items.length * rowH + bottom;
+    const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "presentation" }, container);
+    const lo = 10, hi = 100000; // 10 µs .. 100 ms
+    const x = (v) => lw + ((Math.log10(Math.max(lo, v)) - 1) / (Math.log10(hi) - 1)) * plotW;
+    for (const v of [10, 100, 1000, 10000, 100000]) {
+      el("line", { x1: x(v), x2: x(v), y1: top, y2: height - bottom, stroke: css("--grid"), "stroke-width": 1 }, svg);
+      const tick = v >= 1000 ? `${v / 1000} ms` : `${v} µs`;
+      text(svg, x(v), height - bottom + 16, tick, "tick", v === lo ? "start" : v === hi ? "end" : "middle");
+    }
+    const tip = tooltip(container);
+    const surface = css("--panel");
+    items.forEach((d, i) => {
+      const y0 = top + i * rowH;
+      const cy = narrow ? y0 + 34 : y0 + rowH / 2;
+      const g = el("g", { class: "row" }, svg);
+      el("rect", { x: 0, y: y0, width, height: rowH, class: "hover-band", fill: "transparent" }, g);
+      if (narrow) text(g, 0, y0 + 11, d.scenario, "cat");
+      else text(g, lw - 12, cy, d.scenario, "cat", "end");
+      el("line", { x1: x(d.p50Us), x2: x(d.p99Us), y1: cy, y2: cy, stroke: css("--mark"), "stroke-width": 2, "stroke-linecap": "round", opacity: 0.55 }, g);
+      el("circle", { cx: x(d.p50Us), cy, r: 5, fill: css("--mark-light"), stroke: surface, "stroke-width": 2 }, g);
+      el("circle", { cx: x(d.p99Us), cy, r: 5, fill: css("--mark"), stroke: surface, "stroke-width": 2 }, g);
+      text(g, x(d.p99Us) + 10, cy, fmtUs(d.p99Us), "val");
+      const label = `${d.scenario}: p50 ${fmtUs(d.p50Us)}, p99 ${fmtUs(d.p99Us)}`;
+      const hit = el("rect", { x: 0, y: y0, width, height: rowH, class: "hit", tabindex: 0, "aria-label": label }, g);
+      const show = () => {
+        const scale = container.clientWidth / width;
+        tip.show(d.scenario, [
+          ["p50", fmtUs(d.p50Us), css("--mark-light")],
+          ["p95", fmtUs(d.p95Us)],
+          ["p99", fmtUs(d.p99Us), css("--mark")],
+          ["max", fmtUs(d.maxUs)],
+          ["throughput", `${fmtOps(d.opsPerSec)} ops/s`],
+        ], x(d.p50Us) * scale, (cy - 8) * scale);
+      };
+      hit.addEventListener("pointermove", show);
+      hit.addEventListener("focus", show);
+      hit.addEventListener("pointerleave", () => tip.hide());
+      hit.addEventListener("blur", () => tip.hide());
+    });
+  }
+
+  function tile(parent, { label, value, sub, hero }) {
+    const t = document.createElement("div");
+    t.className = hero ? "tile hero-tile" : "tile";
+    const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+    const v = document.createElement("div"); v.className = "value";
+    if (Array.isArray(value)) {
+      v.append(document.createTextNode(value[0]));
+      const to = document.createElement("span"); to.className = "to"; to.textContent = "→"; to.setAttribute("aria-label", "to");
+      v.append(to, document.createTextNode(value[1]));
+    } else v.textContent = value;
+    const s = document.createElement("div"); s.className = "sub"; s.textContent = sub;
+    t.append(l, v, s);
+    parent.appendChild(t);
+  }
+
+  async function load(path) {
+    const response = await fetch(path, { cache: "no-cache" });
+    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+    return response.json();
+  }
+
+  function render(memory, suite) {
+    const kpis = document.getElementById("kpis");
+    kpis.replaceChildren();
+    const main = memory.configurations.find((c) => c.id === "main");
+    const evict = memory.configurations.find((c) => c.id === "evict");
+    const both = memory.configurations.find((c) => c.id === "both");
+    const byId = Object.fromEntries(memory.representation.bytesPerDoc.map((r) => [r.id, r.bytes]));
+    const scenario = (name) => suite.results.find((r) => r.scenario === name);
+    tile(kpis, {
+      hero: true,
+      label: `Server RSS, ${fmtInt(memory.workload.documents)} documents, after 80 s idle`,
+      value: [`${fmtInt(main.rssMiB.afterIdle)} MiB`, `${fmtInt(evict.rssMiB.afterIdle)} MiB`],
+      sub: `Before, then with idle eviction. Keeping every document in memory but packed: ${fmtInt(both.rssMiB.afterIdle)} MiB.`,
+    });
+    tile(kpis, { label: "get, hot key, p50", value: fmtUs(scenario("get-hot/sequential").p50Us), sub: `p99 ${fmtUs(scenario("get-hot/sequential").p99Us)}, one connection` });
+    tile(kpis, { label: "set, small document, p50", value: fmtUs(scenario("set-small/sequential").p50Us), sub: `p99 ${fmtUs(scenario("set-small/sequential").p99Us)}, answered before the flush` });
+    tile(kpis, { label: "Idle document in memory", value: `${(byId.btreemap / byId.packed).toFixed(0)}× smaller`, sub: `${fmtBytes(byId.btreemap)} parsed, ${fmtBytes(byId.packed)} packed` });
+    tile(kpis, { label: "Errors in the suite", value: fmtInt(suite.totalErrors), sub: `over ${fmtInt(suite.totalOps)} measured operations` });
+
+    document.getElementById("mem-desc").textContent =
+      `${fmtInt(memory.workload.documents)} documents of ~${fmtInt(memory.workload.avgJsonBytes)} B (${memory.workload.totalJson} of JSON) loaded, flushed, then left alone for 80 s. Lower is better. ${memory.workload.verification[0].toUpperCase()}${memory.workload.verification.slice(1)}.`;
+    const settings = (c) => c.pack_idle_secs === null ? "no packing, no eviction" :
+      `pack_idle_secs = ${c.pack_idle_secs}, idle_eviction_secs = ${c.idle_eviction_secs}`;
+    const configs = [...memory.configurations].sort((a, b) => b.rssMiB.afterIdle - a.rssMiB.afterIdle);
+    hbars(document.getElementById("chart-rss"), configs.map((c) => ({
+      label: c.label,
+      value: c.rssMiB.afterIdle,
+      emphasis: c.id !== "main",
+      tip: [
+        ["after load + flush", `${fmtInt(c.rssMiB.afterLoad)} MiB`],
+        ["after 80 s idle", `${fmtInt(c.rssMiB.afterIdle)} MiB`],
+        ["after 2,000 cold reads", `${fmtInt(c.rssMiB.afterColdReads)} MiB`],
+        [settings(c), ""],
+      ],
+    })), {
+      format: (v) => `${fmtInt(v)} MiB`, axisFormat: (v) => `${fmtInt(v)}`, labelWidth: 300,
+      ariaLabel: `Server RSS after 80 seconds idle: ${configs.map((c) => `${c.label} ${fmtInt(c.rssMiB.afterIdle)} MiB`).join("; ")}.`,
+    });
+    table("table-rss", ["Configuration", "After load + flush (MiB)", "After 80 s idle (MiB)", "After cold reads (MiB)", "Settings"],
+      memory.configurations.map((c) => [c.label, fmtInt(c.rssMiB.afterLoad), fmtInt(c.rssMiB.afterIdle), fmtInt(c.rssMiB.afterColdReads), settings(c)]));
+
+    const repr = memory.representation;
+    const reprItems = [...repr.bytesPerDoc].sort((a, b) => b.bytes - a.bytes);
+    hbars(document.getElementById("chart-repr"), reprItems.map((r) => ({
+      label: r.label,
+      value: r.bytes / 1024,
+      emphasis: r.id === "packed",
+      tip: [["per document", fmtBytes(r.bytes)], ["vs JSON text", `${(r.bytes / repr.jsonBytesPerDoc).toFixed(1)}×`]],
+    })), {
+      format: (v) => `${v.toFixed(1)} KB · ${((v * 1024) / repr.jsonBytesPerDoc).toFixed(1)}×`, axisFormat: (v) => v === 0 ? "0" : `${v} KB`, labelWidth: 330,
+      ariaLabel: `Memory per document: ${reprItems.map((r) => `${r.label} ${fmtBytes(r.bytes)}`).join("; ")}.`,
+    });
+    table("table-repr", ["Representation", "Bytes per document", "× JSON text"],
+      repr.bytesPerDoc.map((r) => [r.label, fmtInt(r.bytes), (r.bytes / repr.jsonBytesPerDoc).toFixed(1)]));
+    document.getElementById("repr-note").textContent =
+      `${fmtInt(repr.documents)} documents of ${repr.jsonBytesPerDoc} B of JSON each. Parsing a packed document back takes ~${repr.parseBack.smallDocMicros} µs for one of this size and ~${repr.parseBack.largeDocMillis} ms for a ${repr.parseBack.largeDocKiB} KiB one, with no PostgreSQL round trip.`;
+
+    const results = [...suite.results].sort((a, b) => a.p50Us - b.p50Us);
+    dumbbell(document.getElementById("chart-lat"), results,
+      `Latency per scenario, p50 to p99: ${results.map((r) => `${r.scenario} ${fmtUs(r.p50Us)} to ${fmtUs(r.p99Us)}`).join("; ")}.`);
+    table("table-lat", ["Scenario", "ops", "errors", "ops/s", "avg", "p50", "p95", "p99", "max"],
+      suite.results.map((r) => [r.scenario, fmtInt(r.operations), fmtInt(r.errors), fmtInt(r.opsPerSec), fmtUs(r.avgUs), fmtUs(r.p50Us), fmtUs(r.p95Us), fmtUs(r.p99Us), fmtUs(r.maxUs)]));
+    const byOps = [...suite.results].sort((a, b) => b.opsPerSec - a.opsPerSec);
+    hbars(document.getElementById("chart-ops"), byOps.map((r) => ({
+      label: r.scenario, value: r.opsPerSec, emphasis: true,
+      tip: [["throughput", `${fmtInt(r.opsPerSec)} ops/s`], ["operations", fmtInt(r.operations)], ["wall time", `${fmtInt(r.wallMs)} ms`]],
+    })), {
+      format: (v) => `${fmtOps(v)} ops/s`, axisFormat: (v) => fmtOps(v), labelWidth: 210,
+      ariaLabel: `Throughput per scenario: ${byOps.map((r) => `${r.scenario} ${fmtInt(r.opsPerSec)} operations per second`).join("; ")}.`,
+    });
+    const s = suite.settings;
+    document.getElementById("env-note").textContent =
+      `Run of ${new Date(suite.generatedAt).toISOString().slice(0, 10)} on ${suite.environment.label ?? suite.environment.platform}, Bun ${suite.environment.bun}, profile ${s.profile}, ${s.concurrency} connections × pipeline ${s.pipeline}, ${fmtInt(suite.totalOps)} operations, ${fmtInt(suite.totalErrors)} errors. all-scan reads up to 10,000 rows per call; its p99 includes the PostgreSQL scan.`;
+  }
+
+  Promise.all([load("results/memory.json"), load("results/latest.json")])
+    .then(([memory, suite]) => {
+      render(memory, suite);
+      // Redraw on width changes only: a redraw changes the page height.
+      let pending = 0;
+      let lastWidth = document.querySelector("main").clientWidth;
+      new ResizeObserver(([entry]) => {
+        const width = Math.round(entry.contentRect.width);
+        if (width === lastWidth) return;
+        lastWidth = width;
+        cancelAnimationFrame(pending);
+        pending = requestAnimationFrame(() => render(memory, suite));
+      }).observe(document.querySelector("main"));
+    })
+    .catch((error) => {
+      const p = document.createElement("p");
+      p.className = "error";
+      p.textContent = `Could not load the results (${error.message}). They are in benchmarks/results/ in the repository.`;
+      document.getElementById("kpis").replaceChildren(p);
+    });
+})();
+</script>
+</body>
+</html>

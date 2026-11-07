@@ -1,0 +1,121 @@
+# HorizonDB CI: tests on every push and merge request, the website
+# (landing, docs EN/FR, brand kit, benchmarks) on GitLab Pages from the
+# default branch, and an on-demand benchmark run against a real PostgreSQL.
+
+stages:
+  - test
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  CARGO_TERM_COLOR: always
+
+.rust:
+  image: rust:1
+  cache:
+    key: cargo-$CI_JOB_NAME
+    paths:
+      - .cargo-home/registry
+      - .cargo-home/git
+      - target/
+
+.bun:
+  image: oven/bun:1
+  before_script:
+    - cd sdk && bun install && cd ..
+
+rust:test:
+  extends: .rust
+  stage: test
+  script:
+    - cargo test
+
+sdk:test:
+  extends: .bun
+  stage: test
+  script:
+    - cd sdk
+    - bun run typecheck
+    - bun test
+
+docs:build:
+  stage: build
+  image: python:3.12-slim
+  needs: []
+  cache:
+    key: pip
+    paths:
+      - .pip-cache/
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.pip-cache
+  script:
+    - pip install --quiet mkdocs-material
+    - mkdocs build --strict -f docs/mkdocs.en.yml
+    - mkdocs build --strict -f docs/mkdocs.fr.yml
+  artifacts:
+    paths:
+      - public/docs
+    expire_in: 1 week
+
+pages:
+  stage: deploy
+  image: python:3.12-slim
+  needs:
+    - docs:build
+    - rust:test
+    - sdk:test
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # Landing page at the root: it references the brand files as ../assets
+    # from site/, which is assets/ once it sits next to them.
+    - mkdir -p public/brand public/benchmarks/results
+    - sed 's#\.\./assets/#assets/#g' site/index.html > public/index.html
+    - cp -r assets public/assets
+    - cp -r site/brand/. public/brand/
+    - cp -r site/benchmarks/. public/benchmarks/
+    - cp benchmarks/results/*.json public/benchmarks/results/
+    - python3 -m zipfile -c public/brand/horizondb-brand-kit.zip assets/
+  artifacts:
+    paths:
+      - public
+  publish: public
+
+# On demand: run the end-to-end suite against a real PostgreSQL and keep the
+# JSON. Copy it to benchmarks/results/latest.json to publish it (shared CI
+# runners are noisy: prefer numbers from a dedicated machine).
+bench:
+  extends: .rust
+  stage: test
+  when: manual
+  allow_failure: true
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: horizon
+    POSTGRES_USER: horizon
+    POSTGRES_PASSWORD: horizon
+  script:
+    - curl -fsSL https://bun.sh/install | bash
+    - export PATH="$HOME/.bun/bin:$PATH"
+    - (cd sdk && bun install)
+    - cargo build --release
+    - sed -e 's/^host = "127.0.0.1"$/host = "postgres"/' -e 's/^password = "change-me"$/password = "horizon"/' example.config.toml > ci.config.toml
+    - ./target/release/horizondb ci.config.toml > server.log 2>&1 &
+    - for _ in $(seq 100); do grep -q "listening" server.log && break; sleep 0.2; done
+    - BENCH_LABEL="gitlab-ci shared runner" bun benchmarks/bench.ts --profile quick --json bench-results.json
+  artifacts:
+    when: always
+    paths:
+      - bench-results.json
+      - server.log

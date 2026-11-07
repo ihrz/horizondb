@@ -116,6 +116,8 @@ export interface BenchOptions {
   pipeline: number;
   requestTimeoutMs: number;
   scenarioCapMs: number;
+  /** When set, the results are also written there as JSON. */
+  jsonPath?: string;
 }
 
 export function parseOptions(argv: string[]): BenchOptions {
@@ -170,6 +172,10 @@ export function parseOptions(argv: string[]): BenchOptions {
         break;
       case "--cap":
         options.scenarioCapMs = Number(next);
+        index++;
+        break;
+      case "--json":
+        options.jsonPath = next as string;
         index++;
         break;
       default:

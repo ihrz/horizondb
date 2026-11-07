@@ -30,6 +30,7 @@ Prerequisites: `bun` ≥ 1.4, `docker`/`podman`, Rust toolchain. The script fail
 | `--timeout ms` | `10000` | Per-request timeout (client side) |
 | `--cap ms` | `25000` | **Wall-time budget per scenario** — past it, the scenario stops and its partials are reported |
 | `--url`, `--user`, `--pass`, `--table` | env/local | Target |
+| `--json path` | none | Also write the results (settings, environment, every scenario) as JSON. `BENCH_LABEL` names the machine in it. The website benchmarks page reads `benchmarks/results/latest.json`. |
 
 Equivalent environment variables: `HORIZON_URL`, `HORIZON_USER`, `HORIZON_PASS`.
 `BENCH_SKIP` environment variable: CSV list of scenarios to skip (e.g. `BENCH_SKIP="spike-burst/idle->flood"`).
