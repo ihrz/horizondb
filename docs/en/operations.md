@@ -70,30 +70,52 @@ it cannot connect at startup, and `Restart=on-failure` retries every 2 s).
 
 ### pm2 { #pm2 }
 
-pm2 can supervise the binary directly. Give it a kill timeout above the
-server's 10 s shutdown budget, otherwise pm2's default (1.6 s) sends SIGKILL in
-the middle of the final flush:
+The repository ships its pm2 ecosystem, `pm2.config.cjs`. It is both the pm2
+config and the launcher pm2 runs. On every start and automatic restart it:
 
-```js title="ecosystem.config.cjs"
-module.exports = {
-  apps: [
-    {
-      name: "horizondb",
-      script: "./target/release/horizondb",
-      args: "config.toml",
-      cwd: "/home/ihrz/db",
-      interpreter: "none",
-      kill_timeout: 15000,
-      env: { RUST_LOG: "info" },
-    },
-  ],
-};
-```
+1. runs `git pull --ff-only` on the checked-out branch (a diverged or locally
+   modified checkout is never merged behind your back: the pull fails, is
+   logged, and the start goes on);
+2. builds `cargo build --release` when `HEAD` differs from the commit of the
+   installed binary, then installs it atomically as `dist/horizondb` (with
+   `dist/horizondb.commit`). A failed build keeps the previous binary;
+3. starts `dist/horizondb config.toml` and forwards SIGINT/SIGTERM, so a stop
+   or restart lets the server flush. `kill_timeout` is 20 s, above the
+   server's 10 s shutdown budget.
+
+First install, from the clone (Rust toolchain and `config.toml` in place):
 
 ```bash
-pm2 start ecosystem.config.cjs
-pm2 logs horizondb
+pm2 start pm2.config.cjs     # pulls, builds (a few minutes the first time), starts
+pm2 save                     # restore it on reboot (with `pm2 startup`)
+pm2 logs db
 ```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HORIZONDB_CONFIG` | `config.toml` next to `pm2.config.cjs` | Config file passed to the server. |
+| `HORIZONDB_PM2_NAME` | `db` | pm2 app name. |
+| `HORIZONDB_SKIP_UPDATE` | unset | `1` starts the installed binary without pull or build. |
+| `RUST_LOG` | `info` | Log filter. |
+
+The variables are read when you run `pm2 start`: set them in that shell.
+
+### Updating without a long downtime { #deploy-script }
+
+A release build takes minutes, and while the launcher builds the server is
+down. Build first, restart after:
+
+```bash
+node scripts/deploy.cjs
+```
+
+It pulls, builds under `nice` while the running server keeps serving, installs
+the binary only if the build succeeded, then runs `pm2 restart db`. The
+launcher finds the binary up to date and starts it at once: the downtime is
+the restart (final flush, then bind). Nothing new means nothing restarted; a
+failed pull or build leaves the running server untouched. Options:
+`--force` (rebuild and restart anyway), `--no-restart` (build only),
+`--name <app>`.
 
 ## Graceful shutdown { #shutdown }
 
@@ -225,8 +247,9 @@ Keep in mind:
 
 ## Upgrading { #upgrading }
 
-1. Build the new binary.
-2. Restart the service (`systemctl restart horizondb` or `pm2 restart horizondb`).
+1. Build the new binary (with pm2: `node scripts/deploy.cjs` does steps 1 and 2,
+   see [Updating without a long downtime](#deploy-script)).
+2. Restart the service (`systemctl restart horizondb` or `pm2 restart db`).
    The old process flushes and exits, the new one binds the port as soon as it
    is free.
 3. Clients see their connections close and their sessions disappear; the SDK

@@ -115,7 +115,9 @@ cargo run --release -- other.toml    # explicit config path
 ```
 
 For production, [`horizondb.service`](horizondb.service) is a hardened systemd
-unit that leaves the final flush time to finish.
+unit that leaves the final flush time to finish. With pm2,
+`pm2 start pm2.config.cjs` pulls, builds and runs the server on every start,
+and `node scripts/deploy.cjs` builds while it keeps serving, then restarts it.
 
 ### Install the SDK
 

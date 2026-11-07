@@ -72,30 +72,54 @@ démarrage, et `Restart=on-failure` réessaie toutes les 2 s).
 
 ### pm2 { #pm2 }
 
-pm2 peut superviser le binaire directement. Donnez-lui un délai d'arrêt
-supérieur au budget d'arrêt de 10 s du serveur, sinon la valeur par défaut de
-pm2 (1,6 s) envoie un SIGKILL en plein flush final :
+Le dépôt fournit son écosystème pm2, `pm2.config.cjs`. C'est à la fois la
+config pm2 et le lanceur que pm2 exécute. À chaque démarrage et redémarrage
+automatique, il :
 
-```js title="ecosystem.config.cjs"
-module.exports = {
-  apps: [
-    {
-      name: "horizondb",
-      script: "./target/release/horizondb",
-      args: "config.toml",
-      cwd: "/home/ihrz/db",
-      interpreter: "none",
-      kill_timeout: 15000,
-      env: { RUST_LOG: "info" },
-    },
-  ],
-};
-```
+1. lance `git pull --ff-only` sur la branche courante (un checkout divergent ou
+   modifié localement n'est jamais fusionné dans votre dos : le pull échoue,
+   c'est journalisé, et le démarrage continue) ;
+2. compile `cargo build --release` quand `HEAD` diffère du commit du binaire
+   installé, puis l'installe de façon atomique en `dist/horizondb` (avec
+   `dist/horizondb.commit`). Un build en échec garde le binaire précédent ;
+3. démarre `dist/horizondb config.toml` et transmet SIGINT/SIGTERM : un arrêt
+   ou un redémarrage laisse le serveur flusher. `kill_timeout` vaut 20 s,
+   au-dessus du budget d'arrêt de 10 s du serveur.
+
+Première installation, depuis le clone (toolchain Rust et `config.toml` en
+place) :
 
 ```bash
-pm2 start ecosystem.config.cjs
-pm2 logs horizondb
+pm2 start pm2.config.cjs     # pull, build (quelques minutes la première fois), démarrage
+pm2 save                     # relancé au reboot (avec `pm2 startup`)
+pm2 logs db
 ```
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `HORIZONDB_CONFIG` | `config.toml` à côté de `pm2.config.cjs` | Fichier de config passé au serveur. |
+| `HORIZONDB_PM2_NAME` | `db` | Nom de l'app pm2. |
+| `HORIZONDB_SKIP_UPDATE` | absente | `1` démarre le binaire installé sans pull ni build. |
+| `RUST_LOG` | `info` | Filtre des logs. |
+
+Les variables sont lues au moment du `pm2 start` : définissez-les dans ce shell.
+
+### Mettre à jour sans longue coupure { #deploy-script }
+
+Un build release prend plusieurs minutes, et pendant que le lanceur compile, le
+serveur est arrêté. Compilez d'abord, redémarrez ensuite :
+
+```bash
+node scripts/deploy.cjs
+```
+
+Le script fait le pull, compile sous `nice` pendant que le serveur en place
+continue de servir, n'installe le binaire que si le build a réussi, puis lance
+`pm2 restart db`. Le lanceur trouve un binaire à jour et le démarre aussitôt :
+la coupure se limite au redémarrage (flush final, puis bind). Rien de nouveau,
+rien de redémarré ; un pull ou un build en échec laisse le serveur en place
+intact. Options : `--force` (recompile et redémarre quand même),
+`--no-restart` (compile seulement), `--name <app>`.
 
 ## Arrêt propre { #shutdown }
 
@@ -236,9 +260,10 @@ Une méthode pour `idle_eviction_secs` :
 
 ## Mise à jour { #upgrading }
 
-1. Compilez le nouveau binaire.
+1. Compilez le nouveau binaire (avec pm2, `node scripts/deploy.cjs` fait les
+   étapes 1 et 2, voir [Mettre à jour sans longue coupure](#deploy-script)).
 2. Redémarrez le service (`systemctl restart horizondb` ou
-   `pm2 restart horizondb`). L'ancien processus flushe et quitte, le nouveau
+   `pm2 restart db`). L'ancien processus flushe et quitte, le nouveau
    prend le port dès qu'il est libre.
 3. Les clients voient leurs connexions se fermer et leurs sessions disparaître ;
    le SDK se reconnecte et refait le login tout seul.
