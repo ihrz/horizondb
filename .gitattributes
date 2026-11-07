@@ -1,0 +1,3 @@
+# The showcase site (site/) is not part of the database: keep it out of the
+# GitLab language statistics so the repository shows as Rust.
+site/** linguist-documentation
