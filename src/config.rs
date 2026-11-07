@@ -18,6 +18,8 @@ const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_FLUSH_INTERVAL_SECS: u64 = 300;
 /// Flushed documents untouched for this long leave memory (0 disables).
 const DEFAULT_IDLE_EVICTION_SECS: u64 = 900;
+/// Documents untouched for this long are packed to JSON text (0 disables).
+const DEFAULT_PACK_IDLE_SECS: u64 = 120;
 
 pub struct Secret(String);
 
@@ -95,6 +97,12 @@ pub struct DatabaseConfig {
     /// access). `0` keeps every loaded document in memory forever.
     #[serde(default = "default_idle_eviction_secs")]
     pub idle_eviction_secs: u64,
+    /// Seconds without any read or write after which a document is packed
+    /// to compact JSON text in memory (about ten times smaller than the
+    /// parsed tree); its next access parses it back. `0` keeps every
+    /// document parsed.
+    #[serde(default = "default_pack_idle_secs")]
+    pub pack_idle_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,6 +150,10 @@ fn default_flush_interval_secs() -> u64 {
 
 fn default_idle_eviction_secs() -> u64 {
     DEFAULT_IDLE_EVICTION_SECS
+}
+
+fn default_pack_idle_secs() -> u64 {
+    DEFAULT_PACK_IDLE_SECS
 }
 
 impl AppConfig {
@@ -264,6 +276,7 @@ password = "secret"
             config.database.idle_eviction_secs,
             DEFAULT_IDLE_EVICTION_SECS
         );
+        assert_eq!(config.database.pack_idle_secs, DEFAULT_PACK_IDLE_SECS);
         assert_eq!(
             config.auth.session_timeout_secs,
             DEFAULT_SESSION_TIMEOUT_SECS

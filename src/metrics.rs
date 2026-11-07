@@ -73,6 +73,7 @@ impl Metrics {
             memory_hit_rate = format!("{memory_hit_rate:.2}%"),
             memory_entries = memory.entries,
             memory_evicted = memory.evicted,
+            memory_packed = memory.packed,
             "server stats"
         );
         if let Some(allocator) = alloc::stats() {
@@ -113,6 +114,7 @@ mod tests {
                 misses: 2,
                 entries: 5,
                 evicted: 1,
+                packed: 2,
             },
         );
     }

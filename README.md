@@ -77,12 +77,18 @@ HorizonDB sits on the line between the two.
 4. Every `flush_interval_secs` (default 300), dirty keys go down in batches:
    at most 500 rows or 32 MiB per upsert, 5 000 ids per delete. A write that
    lands during a flush stays dirty for the next one.
-5. Every minute a sweep drops expired TTL keys and the clean documents nobody
-   touched for `idle_eviction_secs` (default 900): memory follows the working
-   set, not everything read since startup. A dirty key never leaves memory
-   before it is flushed. The allocator (jemalloc) hands freed pages back to
-   the OS, and the stats line logs `memory_entries`, `memory_evicted`,
-   `allocated` and `resident`.
+5. Every minute a sweep keeps memory proportional to the working set:
+   - documents idle for `pack_idle_secs` (default 120) are packed to compact
+     JSON text, about 10x smaller than the parsed tree, and parsed back in
+     place on their next access (microseconds, no PostgreSQL round trip);
+   - clean documents idle for `idle_eviction_secs` (default 900) leave memory
+     and reload from PostgreSQL when needed. A dirty key never leaves memory
+     before it is flushed;
+   - expired TTL keys are purged.
+
+   The allocator (jemalloc) hands freed pages back to the OS, and the stats
+   line logs `memory_entries`, `memory_packed`, `memory_evicted`, `allocated`
+   and `resident`.
 
 > [!WARNING]
 > **Durability is a trade you choose.** Until the next flush, writes live only
@@ -175,7 +181,7 @@ work for a caller that gave up. Full semantics in [WHAT.md](WHAT.md).
 | Section | Keys | Notes |
 | --- | --- | --- |
 | `[server]` | `host`, `port`, `max_connections`, `max_message_size` | Size `max_message_size` above your largest document (default 64 MiB, max 256 MiB): an oversized message closes that connection and everything in flight on it. |
-| `[database]` | connection, pool sizing and timeouts, `flush_interval_secs`, `idle_eviction_secs` | `max_connections` should follow the number of clients doing cold reads at startup. `idle_eviction_secs = 0` keeps every loaded document in memory. |
+| `[database]` | connection, pool sizing and timeouts, `flush_interval_secs`, `pack_idle_secs`, `idle_eviction_secs` | `max_connections` should follow the number of clients doing cold reads at startup. `0` disables packing or eviction. |
 | `[auth]` | `username`, `password` **or** `password_hash`, `session_timeout_secs` | Prefer an argon2id `password_hash` in production. |
 
 Logs follow `RUST_LOG`: `debug` traces every request (operation, table, key,

@@ -79,13 +79,20 @@ tout au redémarrage. HorizonDB se tient sur la ligne entre les deux.
    descendent par lots : au plus 500 lignes ou 32 Mio par upsert, 5 000 ids
    par suppression. Une écriture arrivée pendant un flush reste sale pour le
    suivant.
-5. Chaque minute, un balayage retire les clés TTL expirées et les documents
-   propres que personne n'a touchés depuis `idle_eviction_secs` (900 par
-   défaut) : la mémoire suit les données actives, pas tout ce qui a été lu
-   depuis le démarrage. Une clé sale ne quitte jamais la mémoire avant son
-   flush. L'allocateur (jemalloc) rend les pages libérées au système, et la
-   ligne de stats affiche `memory_entries`, `memory_evicted`, `allocated` et
-   `resident`.
+5. Chaque minute, un balayage garde la mémoire proportionnelle aux données
+   actives :
+   - les documents inactifs depuis `pack_idle_secs` (120 par défaut) sont
+     compactés en JSON texte, environ 10 fois plus petit que l'arbre parsé,
+     puis reparsés sur place au prochain accès (quelques microsecondes, sans
+     aller-retour PostgreSQL) ;
+   - les documents propres inactifs depuis `idle_eviction_secs` (900 par
+     défaut) quittent la mémoire et sont rechargés depuis PostgreSQL au
+     besoin. Une clé sale ne quitte jamais la mémoire avant son flush ;
+   - les clés TTL expirées sont purgées.
+
+   L'allocateur (jemalloc) rend les pages libérées au système, et la ligne de
+   stats affiche `memory_entries`, `memory_packed`, `memory_evicted`,
+   `allocated` et `resident`.
 
 > [!WARNING]
 > **La durabilité est un compromis que vous choisissez.** Jusqu'au prochain
@@ -180,7 +187,7 @@ travailler pour un appelant qui a abandonné. Sémantique complète dans
 | Section | Clés | Notes |
 | --- | --- | --- |
 | `[server]` | `host`, `port`, `max_connections`, `max_message_size` | Dimensionnez `max_message_size` au-dessus de votre plus gros document (64 Mio par défaut, 256 Mio max) : un message trop gros ferme la connexion et tout ce qui y est en vol. |
-| `[database]` | connexion, taille et timeouts du pool, `flush_interval_secs`, `idle_eviction_secs` | `max_connections` doit suivre le nombre de clients qui font des lectures à froid au démarrage. `idle_eviction_secs = 0` garde en mémoire chaque document chargé. |
+| `[database]` | connexion, taille et timeouts du pool, `flush_interval_secs`, `pack_idle_secs`, `idle_eviction_secs` | `max_connections` doit suivre le nombre de clients qui font des lectures à froid au démarrage. `0` désactive le compactage ou l'éviction. |
 | `[auth]` | `username`, `password` **ou** `password_hash`, `session_timeout_secs` | Préférez un `password_hash` argon2id en production. |
 
 Les logs suivent `RUST_LOG` : `debug` trace chaque requête (opération, table,

@@ -28,6 +28,11 @@ flush_interval_secs = 300
 # RAM bounded by the working set instead of everything read since startup.
 # 0 keeps every loaded document in memory forever. Default 900.
 idle_eviction_secs = 900
+# A document neither read nor written for this long is packed in memory to
+# compact JSON text, about ten times smaller than the parsed tree. Its next
+# access parses it back in place (a few microseconds for a 1 KiB document),
+# without touching PostgreSQL. 0 keeps every document parsed. Default 120.
+pack_idle_secs = 120
 
 [auth]
 username = "admin"

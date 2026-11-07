@@ -12,7 +12,7 @@ HorizonDB is a **JSON-oriented key-value database server** written in **Rust** (
 - **Write-behind**: every write updates the in-memory store immediately and is flushed in batches (default every 300 s, configurable via `database.flush_interval_secs`); keys loaded from PostgreSQL lazily on first access; graceful shutdown flushes everything
 - **Documents are never cloned whole on the hot path**: a nested `get` copies only the addressed sub-tree, and `set`/`add`/`push`/`pull`/nested `delete` edit the stored document in place under a per-key lock. A `push` into a multi-megabyte guild document costs microseconds, not a deep copy of the document (which is what made production collapse under load)
 - **Auth**: constant-time comparison (`subtle`) or **argon2id** hash; UUID sessions with automatic expiry
-- **Bounded memory**: clean documents idle for `database.idle_eviction_secs` (default 900, `0` disables) are evicted and reloaded on next access; dirty and TTL entries are never evicted; jemalloc returns freed pages to the OS
+- **Bounded memory**: documents idle for `database.pack_idle_secs` (default 120) are packed to compact JSON text (~10x smaller than a parsed `serde_json::Value`, whose map nodes are sized for 11 entries) and parsed back in place on access; clean documents idle for `database.idle_eviction_secs` (default 900) are evicted and reloaded from PostgreSQL; dirty and TTL entries are never evicted; `0` disables either step; jemalloc returns freed pages to the OS
 - **Monitoring**: atomic counters + periodic stats (connections, success rate, memory hit rate, resident entries, evictions, allocator allocated/resident)
 
 ## Architecture (`src/`)
@@ -88,7 +88,7 @@ Internal failures are always logged at `error` with the table and key involved.
 ## Configuration (`config.toml`, see `example.config.toml`)
 
 - `[server]` host, port, max_connections, max_message_size (default 64 MiB, max 256 MiB; a message above the limit closes the client connection together with every request in flight on it, so size it for the largest document)
-- `[database]` connection + pool sizing/timeouts + `flush_interval_secs` (write-behind flush period, default 300) + `idle_eviction_secs` (idle clean documents leave memory, default 900, `0` disables)
+- `[database]` connection + pool sizing/timeouts + `flush_interval_secs` (write-behind flush period, default 300) + `pack_idle_secs` (idle documents packed to JSON text, default 120) + `idle_eviction_secs` (idle clean documents leave memory, default 900); `0` disables either
 - `[auth]` username + `password` **or** `password_hash` (argon2id), session_timeout_secs
 
 ## Quality gates

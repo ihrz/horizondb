@@ -51,9 +51,16 @@ fn now_secs() -> u64 {
     CLOCK_EPOCH.elapsed().as_secs()
 }
 
+/// A document is held either parsed (`value`, the hot form every operation
+/// works on) or packed as compact JSON text (`packed`, about ten times
+/// smaller than the parsed tree: a `serde_json` map node is sized for eleven
+/// entries even when it holds three). The sweep packs documents that went
+/// idle; the next access parses them back in place.
 #[derive(Debug)]
 struct MemEntry {
+    /// The document while hot. `Value::Null` (no allocation) while packed.
     value: Value,
+    packed: Option<Arc<str>>,
     expires_at: Option<Instant>,
 }
 
@@ -61,6 +68,56 @@ impl MemEntry {
     fn is_expired(&self) -> bool {
         self.expires_at
             .is_some_and(|expires_at| Instant::now() >= expires_at)
+    }
+
+    fn replace(&mut self, value: Value) {
+        self.value = value;
+        self.packed = None;
+    }
+
+    /// Whether packing would save memory: scalars are already compact.
+    fn is_packable(&self) -> bool {
+        self.packed.is_none() && (self.value.is_object() || self.value.is_array())
+    }
+
+    /// Swaps the parsed tree for its JSON text. Runs on the blocking pool.
+    fn pack(&mut self) -> bool {
+        if !self.is_packable() {
+            return false;
+        }
+        match serde_json::to_string(&self.value) {
+            Ok(text) => {
+                self.packed = Some(text.into());
+                self.value = Value::Null;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Parses a packed document back in place.
+    async fn unpack(&mut self) -> Result<(), AppError> {
+        if let Some(text) = self.packed.clone() {
+            self.value = parse_packed(text).await?;
+            self.packed = None;
+        }
+        Ok(())
+    }
+
+    /// The document as JSON text, for a flush.
+    fn to_json(&self) -> Result<String, AppError> {
+        match &self.packed {
+            Some(text) => Ok(text.to_string()),
+            None => Ok(serde_json::to_string(&self.value)?),
+        }
+    }
+
+    /// An owned copy of the document, without unpacking the entry.
+    async fn to_value(&self) -> Result<Value, AppError> {
+        match &self.packed {
+            Some(text) => parse_packed(Arc::clone(text)).await,
+            None => Ok(self.value.clone()),
+        }
     }
 }
 
@@ -110,7 +167,11 @@ pub enum Expiry {
 
 fn new_entry(value: Value, expires_at: Option<Instant>) -> Entry {
     Arc::new(Slot {
-        state: RwLock::new(MemEntry { value, expires_at }),
+        state: RwLock::new(MemEntry {
+            value,
+            packed: None,
+            expires_at,
+        }),
         last_access: AtomicU64::new(now_secs()),
     })
 }
@@ -122,6 +183,25 @@ pub struct SweepOutcome {
     pub purged: usize,
     /// Idle, already flushed entries dropped from memory only.
     pub evicted: usize,
+    /// Idle entries packed to compact JSON text.
+    pub packed: usize,
+}
+
+/// When the sweep compacts or drops idle documents, in seconds without any
+/// read or write. `None` disables the step.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryPolicy {
+    pub pack_after: Option<u64>,
+    pub evict_after: Option<u64>,
+}
+
+impl MemoryPolicy {
+    pub fn new(pack_idle_secs: u64, idle_eviction_secs: u64) -> Self {
+        Self {
+            pack_after: (pack_idle_secs > 0).then_some(pack_idle_secs),
+            evict_after: (idle_eviction_secs > 0).then_some(idle_eviction_secs),
+        }
+    }
 }
 
 /// Counters of the in-memory store, for the periodic stats line.
@@ -133,6 +213,8 @@ pub struct MemoryStats {
     pub entries: u64,
     /// Documents evicted since startup.
     pub evicted: u64,
+    /// Documents held packed after the last sweep.
+    pub packed: u64,
 }
 
 /// Why the sweep picked an entry.
@@ -293,12 +375,12 @@ pub struct Repository {
     loading: Arc<Mutex<LoadLocks>>,
     memory_hits: Arc<AtomicU64>,
     memory_misses: Arc<AtomicU64>,
-    /// Clean entries untouched for this long are dropped from memory by the
-    /// sweep and reloaded from `PostgreSQL` on their next access. `None`
-    /// keeps every loaded document resident.
-    idle_eviction: Option<u64>,
+    /// Idle documents are packed, then (once clean) dropped from memory and
+    /// reloaded from `PostgreSQL` on their next access.
+    policy: MemoryPolicy,
     memory_entries: Arc<AtomicU64>,
     memory_evicted: Arc<AtomicU64>,
+    memory_packed: Arc<AtomicU64>,
 }
 
 impl Repository {
@@ -324,7 +406,7 @@ impl Repository {
         let repository = Self::with_pool(
             pool,
             Duration::from_secs(config.flush_interval_secs),
-            config.idle_eviction_secs,
+            MemoryPolicy::new(config.pack_idle_secs, config.idle_eviction_secs),
         );
         let flush_interval = repository.flush_interval;
         let task = tokio::spawn(repository.clone().flush_loop(flush_interval));
@@ -332,7 +414,7 @@ impl Repository {
         Ok(repository)
     }
 
-    fn with_pool(pool: PgPool, flush_interval: Duration, idle_eviction_secs: u64) -> Self {
+    fn with_pool(pool: PgPool, flush_interval: Duration, policy: MemoryPolicy) -> Self {
         Self {
             pool,
             ensured_tables: Arc::new(RwLock::new(HashSet::new())),
@@ -344,9 +426,10 @@ impl Repository {
             loading: Arc::new(Mutex::new(HashMap::new())),
             memory_hits: Arc::new(AtomicU64::new(0)),
             memory_misses: Arc::new(AtomicU64::new(0)),
-            idle_eviction: (idle_eviction_secs > 0).then_some(idle_eviction_secs),
+            policy,
             memory_entries: Arc::new(AtomicU64::new(0)),
             memory_evicted: Arc::new(AtomicU64::new(0)),
+            memory_packed: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -365,9 +448,18 @@ impl Repository {
         let Some(entry) = self.load(table, key).await? else {
             return Ok(None);
         };
-        let guard = entry.read().await;
+        let mut guard = entry.read().await;
         if guard.is_expired() {
             return Ok(None);
+        }
+        if guard.packed.is_some() {
+            drop(guard);
+            let mut inner = entry.write().await;
+            inner.unpack().await?;
+            guard = inner.downgrade();
+            if guard.is_expired() {
+                return Ok(None);
+            }
         }
         Ok(Some(read(&guard.value)))
     }
@@ -488,7 +580,7 @@ impl Repository {
             {
                 let guard = entry.read().await;
                 if !guard.is_expired() {
-                    merged.insert(key, guard.value.clone());
+                    merged.insert(key, guard.to_value().await?);
                 }
             }
             if index % YIELD_EVERY == YIELD_EVERY - 1 {
@@ -545,8 +637,10 @@ impl Repository {
         let outcome = {
             let mut inner = entry.write().await;
             if inner.is_expired() {
-                inner.value = absent;
+                inner.replace(absent);
                 inner.expires_at = None;
+            } else {
+                inner.unpack().await?;
             }
             let outcome = transform(&mut inner.value)?;
             if outcome.is_some() {
@@ -575,30 +669,47 @@ impl Repository {
     /// Removes expired TTL entries; returns how many were purged.
     #[cfg(test)]
     pub async fn purge_expired(&self) -> usize {
-        self.sweep_at(now_secs(), None).await.purged
+        self.sweep_at(now_secs(), MemoryPolicy::default())
+            .await
+            .purged
     }
 
     /// Periodic maintenance of the in-memory store: purges expired TTL
-    /// entries and evicts the clean ones idle for `idle_eviction` seconds.
+    /// entries, evicts the clean ones idle for `policy.evict_after` and
+    /// packs the ones idle for `policy.pack_after`.
     pub async fn sweep(&self) -> SweepOutcome {
-        self.sweep_at(now_secs(), self.idle_eviction).await
+        self.sweep_at(now_secs(), self.policy).await
     }
 
-    async fn sweep_at(&self, now: u64, idle_eviction: Option<u64>) -> SweepOutcome {
+    async fn sweep_at(&self, now: u64, policy: MemoryPolicy) -> SweepOutcome {
+        let idle_eviction = policy.evict_after;
         // Only the candidates are copied out: cloning every key each minute
         // would churn the allocator for entries that are kept anyway. An
-        // entry whose lock is busy is being written, so it is neither
-        // expired nor idle; the next sweep looks at it again.
+        // entry whose lock is busy is in use, so it is neither expired nor
+        // idle; the next sweep looks at it again.
+        let mut already_packed = 0usize;
+        let mut to_pack: Vec<Entry> = Vec::new();
         let candidates: Vec<(String, String, Entry, SweepReason)> = {
             let tables = self.memory.read().await;
             let mut candidates = Vec::new();
             for (table, entries) in tables.iter() {
                 for (key, entry) in entries {
-                    let reason = if entry.try_read().is_ok_and(|guard| guard.is_expired()) {
+                    let Ok(guard) = entry.try_read() else {
+                        continue;
+                    };
+                    let idle = entry.idle_for(now);
+                    let reason = if guard.is_expired() {
                         SweepReason::Expired
-                    } else if idle_eviction.is_some_and(|limit| entry.idle_for(now) >= limit) {
+                    } else if idle_eviction.is_some_and(|limit| idle >= limit) {
                         SweepReason::Idle
                     } else {
+                        if guard.packed.is_some() {
+                            already_packed += 1;
+                        } else if guard.is_packable()
+                            && policy.pack_after.is_some_and(|limit| idle >= limit)
+                        {
+                            to_pack.push(Arc::clone(entry));
+                        }
                         continue;
                     };
                     candidates.push((table.clone(), key.clone(), Arc::clone(entry), reason));
@@ -625,14 +736,21 @@ impl Repository {
             } else if self
                 .evictable(&table, &key, &entry, has_ttl, now, idle_eviction)
                 .await
-                && self.remove_if_same(&table, &key, &entry).await
             {
-                outcome.evicted += 1;
+                if self.remove_if_same(&table, &key, &entry).await {
+                    outcome.evicted += 1;
+                }
+            } else if policy.pack_after.is_some() {
+                // Still pending a flush (or carrying a TTL): it cannot leave
+                // memory yet, but it can shrink.
+                to_pack.push(entry);
             }
             if index % YIELD_EVERY == YIELD_EVERY - 1 {
                 tokio::task::yield_now().await;
             }
         }
+
+        outcome.packed = pack_idle(to_pack, now, policy.pack_after).await;
 
         let entries = if outcome.purged + outcome.evicted > 0 {
             let mut tables = self.memory.write().await;
@@ -652,6 +770,10 @@ impl Repository {
         };
         self.memory_entries.store(
             u64::try_from(entries).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.memory_packed.store(
+            u64::try_from(already_packed + outcome.packed).unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
         self.memory_evicted.fetch_add(
@@ -749,7 +871,7 @@ impl Repository {
                     if guard.is_expired() {
                         None
                     } else {
-                        Some(serde_json::to_string(&guard.value)?)
+                        Some(guard.to_json()?)
                     }
                 }
                 None => None,
@@ -825,6 +947,7 @@ impl Repository {
             misses: self.memory_misses.load(Ordering::Relaxed),
             entries: self.memory_entries.load(Ordering::Relaxed),
             evicted: self.memory_evicted.load(Ordering::Relaxed),
+            packed: self.memory_packed.load(Ordering::Relaxed),
         }
     }
 
@@ -958,7 +1081,7 @@ impl Repository {
         if let (Some(entry), Some(value)) = (existing, pending) {
             entry.touch();
             let mut inner = entry.write().await;
-            inner.value = value;
+            inner.replace(value);
             inner.expires_at = expires_at;
         }
     }
@@ -1043,6 +1166,39 @@ impl Repository {
     }
 }
 
+/// Packs the idle entries on the blocking pool (serializing a large tree
+/// would stall an async worker). An entry that is locked, or was used since
+/// the scan, is skipped: a document in use stays hot. Returns how many were
+/// packed.
+async fn pack_idle(entries: Vec<Entry>, now: u64, pack_after: Option<u64>) -> usize {
+    let Some(limit) = pack_after else {
+        return 0;
+    };
+    if entries.is_empty() {
+        return 0;
+    }
+    tokio::task::spawn_blocking(move || {
+        entries
+            .iter()
+            .filter(|entry| entry.idle_for(now) >= limit)
+            .filter(|entry| entry.try_write().is_ok_and(|mut inner| inner.pack()))
+            .count()
+    })
+    .await
+    .unwrap_or(0)
+}
+
+/// Parses a packed document, moving large ones off the async workers.
+async fn parse_packed(text: Arc<str>) -> Result<Value, AppError> {
+    if text.len() < BLOCKING_PARSE_THRESHOLD {
+        return Ok(serde_json::from_str(&text)?);
+    }
+    tokio::task::spawn_blocking(move || serde_json::from_str::<Value>(&text))
+        .await
+        .map_err(|error| AppError::internal(format!("json parse task failed: {error}")))?
+        .map_err(AppError::from)
+}
+
 /// Parses one JSON payload, moving large ones off the async workers.
 async fn parse_json(raw: String) -> Result<Value, AppError> {
     if raw.len() < BLOCKING_PARSE_THRESHOLD {
@@ -1122,7 +1278,8 @@ mod tests {
             .max_connections(1)
             .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
             .expect("lazy pool");
-        let repository = Repository::with_pool(pool, Duration::from_mins(5), 0);
+        let repository =
+            Repository::with_pool(pool, Duration::from_mins(5), MemoryPolicy::default());
         repository
             .ensured_tables
             .try_write()
@@ -1219,18 +1376,21 @@ mod tests {
     #[test]
     fn mem_entry_expires_only_with_elapsed_ttl() {
         let fresh = MemEntry {
+            packed: None,
             value: json!(1),
             expires_at: Some(Instant::now() + Duration::from_mins(1)),
         };
         assert!(!fresh.is_expired());
 
         let expired = MemEntry {
+            packed: None,
             value: json!(1),
             expires_at: Some(Instant::now()),
         };
         assert!(expired.is_expired());
 
         let never = MemEntry {
+            packed: None,
             value: json!(1),
             expires_at: None,
         };
@@ -1445,6 +1605,13 @@ mod tests {
         dirty.forget(&snapshot);
     }
 
+    fn evict(after: u64) -> MemoryPolicy {
+        MemoryPolicy {
+            pack_after: None,
+            evict_after: Some(after),
+        }
+    }
+
     async fn age(repository: &Repository, key: &str, last_access: u64) {
         repository
             .lookup("t", key)
@@ -1465,12 +1632,13 @@ mod tests {
         }
         pretend_flushed(&repository).await;
 
-        let outcome = repository.sweep_at(now_secs() + 1_000, Some(900)).await;
+        let outcome = repository.sweep_at(now_secs() + 1_000, evict(900)).await;
         assert_eq!(
             outcome,
             SweepOutcome {
                 purged: 0,
-                evicted: 256
+                evicted: 256,
+                packed: 0,
             }
         );
         assert!(repository.lookup("t", "k0").await.is_none());
@@ -1490,7 +1658,7 @@ mod tests {
         repository.set("t", "flushed", json!(2)).await.unwrap();
         repository.set("t", "never", json!(3)).await.unwrap();
 
-        let outcome = repository.sweep_at(now_secs() + 1_000, Some(900)).await;
+        let outcome = repository.sweep_at(now_secs() + 1_000, evict(900)).await;
         assert_eq!(outcome.evicted, 0);
         assert_eq!(
             repository.read("t", "flushed", Value::clone).await.unwrap(),
@@ -1509,7 +1677,7 @@ mod tests {
         age(&repository, "cold", 0).await;
         age(&repository, "hot", 1_000).await;
 
-        let outcome = repository.sweep_at(1_500, Some(900)).await;
+        let outcome = repository.sweep_at(1_500, evict(900)).await;
         assert_eq!(outcome.evicted, 1);
         assert!(repository.lookup("t", "cold").await.is_none());
         assert!(repository.lookup("t", "hot").await.is_some());
@@ -1539,7 +1707,7 @@ mod tests {
             .unwrap();
         pretend_flushed(&repository).await;
 
-        let outcome = repository.sweep_at(now_secs() + 10_000, Some(900)).await;
+        let outcome = repository.sweep_at(now_secs() + 10_000, evict(900)).await;
         assert_eq!(outcome, SweepOutcome::default());
         assert!(repository.lookup("t", "session").await.is_some());
     }
@@ -1549,13 +1717,131 @@ mod tests {
         let repository = memory_only();
         repository.set("t", "k", json!(1)).await.unwrap();
         pretend_flushed(&repository).await;
-        assert_eq!(repository.idle_eviction, None);
+        assert_eq!(repository.policy, MemoryPolicy::default());
 
-        let outcome = repository
-            .sweep_at(u64::MAX, repository.idle_eviction)
-            .await;
+        let outcome = repository.sweep_at(u64::MAX, repository.policy).await;
         assert_eq!(outcome, SweepOutcome::default());
         assert!(repository.lookup("t", "k").await.is_some());
         assert_eq!(repository.memory_stats().entries, 1);
+    }
+
+    fn pack(after: u64) -> MemoryPolicy {
+        MemoryPolicy {
+            pack_after: Some(after),
+            evict_after: None,
+        }
+    }
+
+    async fn is_packed(repository: &Repository, key: &str) -> bool {
+        let entry = repository.lookup("t", key).await.unwrap();
+        entry.read().await.packed.is_some()
+    }
+
+    fn guild() -> Value {
+        json!({"prefix": "+", "members": [{"id": "1", "xp": 10}, {"id": "2", "xp": 20}], "xp": {"on": true}})
+    }
+
+    #[tokio::test]
+    async fn idle_documents_are_packed_and_read_back_identical() {
+        let repository = memory_only();
+        repository.set("t", "g", guild()).await.unwrap();
+        repository.set("t", "n", json!(42)).await.unwrap();
+        age(&repository, "g", 0).await;
+        age(&repository, "n", 0).await;
+
+        let outcome = repository.sweep_at(500, pack(120)).await;
+        assert_eq!(outcome.packed, 1, "scalars are not worth packing");
+        assert!(is_packed(&repository, "g").await);
+        assert!(!is_packed(&repository, "n").await);
+        assert_eq!(repository.memory_stats().packed, 1);
+
+        // A nested read parses the document back in place.
+        assert_eq!(
+            repository
+                .read("t", "g", |value| value["members"][1]["xp"].clone())
+                .await
+                .unwrap(),
+            Some(json!(20))
+        );
+        assert!(!is_packed(&repository, "g").await);
+        assert_eq!(
+            repository.read("t", "g", Value::clone).await.unwrap(),
+            Some(guild())
+        );
+    }
+
+    #[tokio::test]
+    async fn recently_used_documents_stay_parsed() {
+        let repository = memory_only();
+        repository.set("t", "g", guild()).await.unwrap();
+        age(&repository, "g", 450).await;
+        let outcome = repository.sweep_at(500, pack(120)).await;
+        assert_eq!(outcome.packed, 0);
+        assert!(!is_packed(&repository, "g").await);
+    }
+
+    #[tokio::test]
+    async fn mutations_apply_to_packed_documents() {
+        let repository = memory_only();
+        repository.set("t", "g", guild()).await.unwrap();
+        age(&repository, "g", 0).await;
+        repository.sweep_at(500, pack(120)).await;
+        assert!(is_packed(&repository, "g").await);
+
+        repository
+            .mutate("t", "g", Value::Null, Expiry::Clear, |value| {
+                value["prefix"] = json!("!");
+                Ok(Some(()))
+            })
+            .await
+            .unwrap();
+        let mut expected = guild();
+        expected["prefix"] = json!("!");
+        assert_eq!(
+            repository.read("t", "g", Value::clone).await.unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[tokio::test]
+    async fn packed_documents_flush_and_list_unchanged() {
+        let repository = memory_only();
+        repository.set("t", "a", guild()).await.unwrap();
+        repository.set("t", "b", json!([1, 2, 3])).await.unwrap();
+        age(&repository, "a", 0).await;
+        age(&repository, "b", 0).await;
+        // Dirty documents may be packed too: the flush reuses their text.
+        assert_eq!(repository.sweep_at(500, pack(120)).await.packed, 2);
+
+        let entry = repository.lookup("t", "a").await.unwrap();
+        let text = entry.read().await.to_json().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), guild());
+
+        let rows = repository.list_all("t").await.unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("a".to_owned(), guild()),
+                ("b".to_owned(), json!([1, 2, 3]))
+            ]
+        );
+        assert!(is_packed(&repository, "a").await, "listing does not unpack");
+    }
+
+    #[tokio::test]
+    async fn writes_replace_packed_documents() {
+        let repository = memory_only();
+        repository.set("t", "g", guild()).await.unwrap();
+        age(&repository, "g", 0).await;
+        repository.sweep_at(500, pack(120)).await;
+        repository
+            .set("t", "g", json!({"new": true}))
+            .await
+            .unwrap();
+        assert!(!is_packed(&repository, "g").await);
+        assert_eq!(
+            repository.read("t", "g", Value::clone).await.unwrap(),
+            Some(json!({"new": true}))
+        );
     }
 }
