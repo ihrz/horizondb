@@ -23,6 +23,8 @@ use crate::{
 };
 
 const DUPLICATE_TABLE_SQLSTATE: &str = "42P07";
+/// Catalog index hit by two sessions creating the same table at once.
+const TYPE_NAME_INDEX: &str = "pg_type_typname_nsp_index";
 const MAX_LIST_ROWS: i64 = 10_000;
 /// Shards for the per-key write locks. Same-key writers serialize on one
 /// shard; different keys rarely collide (collision only costs a short queue).
@@ -1148,13 +1150,16 @@ impl Repository {
         match sqlx::query(&create).execute(&self.pool).await {
             Ok(_) => {}
             Err(error) => {
+                // Concurrent `CREATE TABLE IF NOT EXISTS` on a missing table:
+                // the loser gets either `duplicate_table` or a unique
+                // violation on the catalog's type-name index. PostgreSQL puts
+                // the index name in the constraint field, not the message.
                 let tolerated = error.as_database_error().is_some_and(|database_error| {
                     database_error
                         .code()
                         .is_some_and(|code| code == DUPLICATE_TABLE_SQLSTATE)
-                        || database_error
-                            .message()
-                            .contains("pg_type_typname_nsp_index")
+                        || database_error.constraint() == Some(TYPE_NAME_INDEX)
+                        || database_error.message().contains(TYPE_NAME_INDEX)
                 });
                 if !tolerated {
                     return Err(AppError::Database(error));
