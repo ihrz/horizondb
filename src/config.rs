@@ -16,6 +16,8 @@ const DEFAULT_MAX_LIFETIME_SECS: u64 = 1800;
 const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 3600;
 /// How often buffered writes are batch-flushed to `PostgreSQL`.
 const DEFAULT_FLUSH_INTERVAL_SECS: u64 = 300;
+/// Flushed documents untouched for this long leave memory (0 disables).
+const DEFAULT_IDLE_EVICTION_SECS: u64 = 900;
 
 pub struct Secret(String);
 
@@ -88,6 +90,11 @@ pub struct DatabaseConfig {
     pub max_lifetime_secs: u64,
     #[serde(default = "default_flush_interval_secs")]
     pub flush_interval_secs: u64,
+    /// Seconds without any read or write after which a document already
+    /// flushed to `PostgreSQL` is dropped from memory (reloaded on its next
+    /// access). `0` keeps every loaded document in memory forever.
+    #[serde(default = "default_idle_eviction_secs")]
+    pub idle_eviction_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +138,10 @@ fn default_session_timeout_secs() -> u64 {
 
 fn default_flush_interval_secs() -> u64 {
     DEFAULT_FLUSH_INTERVAL_SECS
+}
+
+fn default_idle_eviction_secs() -> u64 {
+    DEFAULT_IDLE_EVICTION_SECS
 }
 
 impl AppConfig {
@@ -250,6 +261,10 @@ password = "secret"
             DEFAULT_FLUSH_INTERVAL_SECS
         );
         assert_eq!(
+            config.database.idle_eviction_secs,
+            DEFAULT_IDLE_EVICTION_SECS
+        );
+        assert_eq!(
             config.auth.session_timeout_secs,
             DEFAULT_SESSION_TIMEOUT_SECS
         );
@@ -271,6 +286,14 @@ password = "secret"
         let raw = VALID_MINIMAL.replace("[database]", "[database]\nflush_interval_secs = 0");
         let config = parse(&raw).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn zero_idle_eviction_disables_it() {
+        let raw = VALID_MINIMAL.replace("[database]", "[database]\nidle_eviction_secs = 0");
+        let config = parse(&raw).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.database.idle_eviction_secs, 0);
     }
 
     #[test]

@@ -2,6 +2,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::info;
 
+use crate::{alloc, db::MemoryStats};
+
+const MIB: f64 = 1024.0 * 1024.0;
+
 #[derive(Debug, Default)]
 pub struct Metrics {
     total_connections: AtomicU64,
@@ -40,7 +44,7 @@ impl Metrics {
         self.requests_total.load(Ordering::Relaxed)
     }
 
-    pub fn log_stats(&self, active_sessions: usize, memory_hits: u64, memory_misses: u64) {
+    pub fn log_stats(&self, active_sessions: usize, memory: MemoryStats) {
         let total_requests = self.requests_total.load(Ordering::Relaxed);
         let failed_requests = self.requests_failed.load(Ordering::Relaxed);
 
@@ -51,11 +55,11 @@ impl Metrics {
             } else {
                 ((total_requests - failed_requests) as f64 / total_requests as f64) * 100.0
             };
-            let lookups = memory_hits + memory_misses;
+            let lookups = memory.hits + memory.misses;
             let memory_hit_rate = if lookups == 0 {
                 0.0
             } else {
-                (memory_hits as f64 / lookups as f64) * 100.0
+                (memory.hits as f64 / lookups as f64) * 100.0
             };
             (success_rate, memory_hit_rate)
         };
@@ -67,8 +71,22 @@ impl Metrics {
             total_requests = self.total_requests(),
             success_rate = format!("{success_rate:.2}%"),
             memory_hit_rate = format!("{memory_hit_rate:.2}%"),
+            memory_entries = memory.entries,
+            memory_evicted = memory.evicted,
             "server stats"
         );
+        if let Some(allocator) = alloc::stats() {
+            #[allow(clippy::cast_precision_loss)]
+            let (allocated, resident) = (
+                allocator.allocated as f64 / MIB,
+                allocator.resident as f64 / MIB,
+            );
+            info!(
+                allocated = format!("{allocated:.1} MiB"),
+                resident = format!("{resident:.1} MiB"),
+                "memory stats"
+            );
+        }
     }
 }
 
@@ -88,6 +106,14 @@ mod tests {
         metrics.connection_closed();
         assert_eq!(metrics.active_connections(), 1);
 
-        metrics.log_stats(3, 8, 2);
+        metrics.log_stats(
+            3,
+            MemoryStats {
+                hits: 8,
+                misses: 2,
+                entries: 5,
+                evicted: 1,
+            },
+        );
     }
 }

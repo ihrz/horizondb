@@ -1,8 +1,9 @@
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry as MapSlot},
     hash::{DefaultHasher, Hash, Hasher},
+    ops::Deref,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -37,6 +38,18 @@ const FLUSH_DELETES_PER_STATEMENT: usize = 5_000;
 const YIELD_EVERY: usize = 32;
 /// JSON payloads at or above this size are parsed on the blocking pool.
 const BLOCKING_PARSE_THRESHOLD: usize = 256 * 1024;
+/// A key map is shrunk after a sweep once it uses less than
+/// `1 / SHRINK_RATIO` of its capacity: `HashMap` never gives back the
+/// buckets of removed entries on its own.
+const SHRINK_RATIO: usize = 4;
+
+/// Reference point of the coarse access clock.
+static CLOCK_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// Seconds elapsed since the first use of the access clock.
+fn now_secs() -> u64 {
+    CLOCK_EPOCH.elapsed().as_secs()
+}
 
 #[derive(Debug)]
 struct MemEntry {
@@ -55,7 +68,33 @@ impl MemEntry {
 /// part they need; writers mutate the document in place under the inner
 /// write lock. The outer store lock is never held while waiting for an
 /// inner lock and an inner lock is never held while taking the outer one.
-type Entry = Arc<RwLock<MemEntry>>;
+#[derive(Debug)]
+struct Slot {
+    state: RwLock<MemEntry>,
+    /// Last read or write, in `now_secs`. Kept outside the inner lock so the
+    /// sweep can spot idle entries without locking each of them.
+    last_access: AtomicU64,
+}
+
+impl Slot {
+    fn touch(&self) {
+        self.last_access.store(now_secs(), Ordering::Relaxed);
+    }
+
+    fn idle_for(&self, now: u64) -> u64 {
+        now.saturating_sub(self.last_access.load(Ordering::Relaxed))
+    }
+}
+
+impl Deref for Slot {
+    type Target = RwLock<MemEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+type Entry = Arc<Slot>;
 type Store = HashMap<String, HashMap<String, Entry>>;
 /// Per-key locks for in-progress `PostgreSQL` loads (single-flight).
 type LoadLocks = HashMap<(String, String), Arc<Mutex<()>>>;
@@ -70,7 +109,37 @@ pub enum Expiry {
 }
 
 fn new_entry(value: Value, expires_at: Option<Instant>) -> Entry {
-    Arc::new(RwLock::new(MemEntry { value, expires_at }))
+    Arc::new(Slot {
+        state: RwLock::new(MemEntry { value, expires_at }),
+        last_access: AtomicU64::new(now_secs()),
+    })
+}
+
+/// What one sweep of the in-memory store did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SweepOutcome {
+    /// Expired TTL entries removed (and deleted from `PostgreSQL`).
+    pub purged: usize,
+    /// Idle, already flushed entries dropped from memory only.
+    pub evicted: usize,
+}
+
+/// Counters of the in-memory store, for the periodic stats line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryStats {
+    pub hits: u64,
+    pub misses: u64,
+    /// Documents held in memory after the last sweep.
+    pub entries: u64,
+    /// Documents evicted since startup.
+    pub evicted: u64,
+}
+
+/// Why the sweep picked an entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SweepReason {
+    Expired,
+    Idle,
 }
 
 /// Tracks which writes still need to be pushed to `PostgreSQL`.
@@ -107,6 +176,15 @@ impl DirtyTracker {
         self.upserts.retain(|(t, _), _| t != table);
         self.deletes.retain(|(t, _), _| t != table);
         self.cleared.insert(table.to_owned(), self.generation);
+    }
+
+    /// Whether memory holds the only up-to-date copy of the key, i.e. it
+    /// must stay resident until a flush pushed it to `PostgreSQL`.
+    fn is_pending(&self, table: &str, key: &str) -> bool {
+        self.cleared.contains_key(table)
+            || self
+                .upserts
+                .contains_key(&(table.to_owned(), key.to_owned()))
     }
 
     fn is_logically_absent(&self, table: &str, key: &str) -> bool {
@@ -215,6 +293,12 @@ pub struct Repository {
     loading: Arc<Mutex<LoadLocks>>,
     memory_hits: Arc<AtomicU64>,
     memory_misses: Arc<AtomicU64>,
+    /// Clean entries untouched for this long are dropped from memory by the
+    /// sweep and reloaded from `PostgreSQL` on their next access. `None`
+    /// keeps every loaded document resident.
+    idle_eviction: Option<u64>,
+    memory_entries: Arc<AtomicU64>,
+    memory_evicted: Arc<AtomicU64>,
 }
 
 impl Repository {
@@ -237,14 +321,18 @@ impl Repository {
             .await?;
         sqlx::query("SELECT 1").execute(&pool).await?;
 
-        let repository = Self::with_pool(pool, Duration::from_secs(config.flush_interval_secs));
+        let repository = Self::with_pool(
+            pool,
+            Duration::from_secs(config.flush_interval_secs),
+            config.idle_eviction_secs,
+        );
         let flush_interval = repository.flush_interval;
         let task = tokio::spawn(repository.clone().flush_loop(flush_interval));
         *repository.flush_task.lock().await = Some(task);
         Ok(repository)
     }
 
-    fn with_pool(pool: PgPool, flush_interval: Duration) -> Self {
+    fn with_pool(pool: PgPool, flush_interval: Duration, idle_eviction_secs: u64) -> Self {
         Self {
             pool,
             ensured_tables: Arc::new(RwLock::new(HashSet::new())),
@@ -256,6 +344,9 @@ impl Repository {
             loading: Arc::new(Mutex::new(HashMap::new())),
             memory_hits: Arc::new(AtomicU64::new(0)),
             memory_misses: Arc::new(AtomicU64::new(0)),
+            idle_eviction: (idle_eviction_secs > 0).then_some(idle_eviction_secs),
+            memory_entries: Arc::new(AtomicU64::new(0)),
+            memory_evicted: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -482,42 +573,110 @@ impl Repository {
     }
 
     /// Removes expired TTL entries; returns how many were purged.
+    #[cfg(test)]
     pub async fn purge_expired(&self) -> usize {
-        let candidates: Vec<(String, String, Entry)> = {
+        self.sweep_at(now_secs(), None).await.purged
+    }
+
+    /// Periodic maintenance of the in-memory store: purges expired TTL
+    /// entries and evicts the clean ones idle for `idle_eviction` seconds.
+    pub async fn sweep(&self) -> SweepOutcome {
+        self.sweep_at(now_secs(), self.idle_eviction).await
+    }
+
+    async fn sweep_at(&self, now: u64, idle_eviction: Option<u64>) -> SweepOutcome {
+        // Only the candidates are copied out: cloning every key each minute
+        // would churn the allocator for entries that are kept anyway. An
+        // entry whose lock is busy is being written, so it is neither
+        // expired nor idle; the next sweep looks at it again.
+        let candidates: Vec<(String, String, Entry, SweepReason)> = {
             let tables = self.memory.read().await;
-            tables
-                .iter()
-                .flat_map(|(table, entries)| {
-                    entries
-                        .iter()
-                        .map(|(key, entry)| (table.clone(), key.clone(), Arc::clone(entry)))
-                })
-                .collect()
+            let mut candidates = Vec::new();
+            for (table, entries) in tables.iter() {
+                for (key, entry) in entries {
+                    let reason = if entry.try_read().is_ok_and(|guard| guard.is_expired()) {
+                        SweepReason::Expired
+                    } else if idle_eviction.is_some_and(|limit| entry.idle_for(now) >= limit) {
+                        SweepReason::Idle
+                    } else {
+                        continue;
+                    };
+                    candidates.push((table.clone(), key.clone(), Arc::clone(entry), reason));
+                }
+            }
+            candidates
         };
 
-        let mut purged = 0;
-        for (table, key, entry) in candidates {
-            if !entry.read().await.is_expired() {
-                continue;
-            }
-            // Same lock as every writer: no mutation can revive the entry
-            // between the expiry check and its removal.
+        let mut outcome = SweepOutcome::default();
+        for (index, (table, key, entry, reason)) in candidates.into_iter().enumerate() {
+            // Same lock as every writer: no write can land between the checks
+            // below and the removal, so a dirty or revived entry is never
+            // dropped.
             let _guard = self.write_locks[mutate_shard(&table, &key)].lock().await;
-            if !entry.read().await.is_expired() {
-                continue;
-            }
-            if self.remove_if_same(&table, &key, &entry).await {
-                self.mark_delete(&table, &key).await;
-                purged += 1;
-            }
-        }
-        if purged > 0 {
-            self.memory
-                .write()
+            let (expired, has_ttl) = {
+                let inner = entry.read().await;
+                (inner.is_expired(), inner.expires_at.is_some())
+            };
+            if reason == SweepReason::Expired {
+                if expired && self.remove_if_same(&table, &key, &entry).await {
+                    self.mark_delete(&table, &key).await;
+                    outcome.purged += 1;
+                }
+            } else if self
+                .evictable(&table, &key, &entry, has_ttl, now, idle_eviction)
                 .await
-                .retain(|_, entries| !entries.is_empty());
+                && self.remove_if_same(&table, &key, &entry).await
+            {
+                outcome.evicted += 1;
+            }
+            if index % YIELD_EVERY == YIELD_EVERY - 1 {
+                tokio::task::yield_now().await;
+            }
         }
-        purged
+
+        let entries = if outcome.purged + outcome.evicted > 0 {
+            let mut tables = self.memory.write().await;
+            tables.retain(|_, entries| !entries.is_empty());
+            for entries in tables.values_mut() {
+                if entries.len() * SHRINK_RATIO < entries.capacity() {
+                    entries.shrink_to_fit();
+                }
+            }
+            if tables.len() * SHRINK_RATIO < tables.capacity() {
+                tables.shrink_to_fit();
+            }
+            tables.values().map(HashMap::len).sum::<usize>()
+        } else {
+            let tables = self.memory.read().await;
+            tables.values().map(HashMap::len).sum::<usize>()
+        };
+        self.memory_entries.store(
+            u64::try_from(entries).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.memory_evicted.fetch_add(
+            u64::try_from(outcome.evicted).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        outcome
+    }
+
+    /// Whether an idle candidate may leave memory. Caller holds the key's
+    /// write lock. TTL entries are left to the purge: their deadline is not
+    /// stored in `PostgreSQL`, so a reload would make them permanent. Dirty
+    /// entries stay until a flush made `PostgreSQL` current.
+    async fn evictable(
+        &self,
+        table: &str,
+        key: &str,
+        entry: &Entry,
+        has_ttl: bool,
+        now: u64,
+        idle_eviction: Option<u64>,
+    ) -> bool {
+        !has_ttl
+            && idle_eviction.is_some_and(|limit| entry.idle_for(now) >= limit)
+            && !self.dirty.lock().await.is_pending(table, key)
     }
 
     /// Batch-pushes all buffered writes to `PostgreSQL`. Safe to call
@@ -660,11 +819,13 @@ impl Repository {
         self.pool.close().await;
     }
 
-    pub fn memory_stats(&self) -> (u64, u64) {
-        (
-            self.memory_hits.load(Ordering::Relaxed),
-            self.memory_misses.load(Ordering::Relaxed),
-        )
+    pub fn memory_stats(&self) -> MemoryStats {
+        MemoryStats {
+            hits: self.memory_hits.load(Ordering::Relaxed),
+            misses: self.memory_misses.load(Ordering::Relaxed),
+            entries: self.memory_entries.load(Ordering::Relaxed),
+            evicted: self.memory_evicted.load(Ordering::Relaxed),
+        }
     }
 
     async fn flush_loop(self, interval: Duration) {
@@ -685,6 +846,7 @@ impl Repository {
     async fn load(&self, table: &str, key: &str) -> Result<Option<Entry>, AppError> {
         if let Some(entry) = self.lookup(table, key).await {
             self.memory_hits.fetch_add(1, Ordering::Relaxed);
+            entry.touch();
             return Ok(Some(entry));
         }
         self.memory_misses.fetch_add(1, Ordering::Relaxed);
@@ -794,6 +956,7 @@ impl Repository {
             }
         };
         if let (Some(entry), Some(value)) = (existing, pending) {
+            entry.touch();
             let mut inner = entry.write().await;
             inner.value = value;
             inner.expires_at = expires_at;
@@ -959,7 +1122,7 @@ mod tests {
             .max_connections(1)
             .connect_lazy("postgresql://unused:unused@127.0.0.1:1/unused")
             .expect("lazy pool");
-        let repository = Repository::with_pool(pool, Duration::from_mins(5));
+        let repository = Repository::with_pool(pool, Duration::from_mins(5), 0);
         repository
             .ensured_tables
             .try_write()
@@ -1272,5 +1435,127 @@ mod tests {
         repository.clear_table("t").await.unwrap();
         assert_eq!(repository.read("t", "k", Value::clone).await.unwrap(), None);
         assert!(!repository.delete("t", "k").await.unwrap());
+    }
+
+    /// Forgets every dirty mark, as if a flush had pushed everything to
+    /// `PostgreSQL` (the table is no longer considered cleared either).
+    async fn pretend_flushed(repository: &Repository) {
+        let mut dirty = repository.dirty.lock().await;
+        let snapshot = dirty.snapshot();
+        dirty.forget(&snapshot);
+    }
+
+    async fn age(repository: &Repository, key: &str, last_access: u64) {
+        repository
+            .lookup("t", key)
+            .await
+            .unwrap()
+            .last_access
+            .store(last_access, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn idle_flushed_entries_are_evicted_and_maps_shrink() {
+        let repository = memory_only();
+        for index in 0..256 {
+            repository
+                .set("t", &format!("k{index}"), json!({"i": index}))
+                .await
+                .unwrap();
+        }
+        pretend_flushed(&repository).await;
+
+        let outcome = repository.sweep_at(now_secs() + 1_000, Some(900)).await;
+        assert_eq!(
+            outcome,
+            SweepOutcome {
+                purged: 0,
+                evicted: 256
+            }
+        );
+        assert!(repository.lookup("t", "k0").await.is_none());
+        assert!(repository.memory.read().await.is_empty());
+        // Evicted keys are not deleted: they are reloaded on next access.
+        assert!(!repository.dirty.lock().await.is_logically_absent("t", "k0"));
+        let stats = repository.memory_stats();
+        assert_eq!((stats.entries, stats.evicted), (0, 256));
+    }
+
+    #[tokio::test]
+    async fn dirty_entries_are_never_evicted() {
+        let repository = memory_only();
+        repository.set("t", "flushed", json!(1)).await.unwrap();
+        pretend_flushed(&repository).await;
+        // Written again after the flush: memory holds the only copy.
+        repository.set("t", "flushed", json!(2)).await.unwrap();
+        repository.set("t", "never", json!(3)).await.unwrap();
+
+        let outcome = repository.sweep_at(now_secs() + 1_000, Some(900)).await;
+        assert_eq!(outcome.evicted, 0);
+        assert_eq!(
+            repository.read("t", "flushed", Value::clone).await.unwrap(),
+            Some(json!(2))
+        );
+        assert!(repository.lookup("t", "never").await.is_some());
+        assert_eq!(repository.memory_stats().entries, 2);
+    }
+
+    #[tokio::test]
+    async fn recently_used_entries_stay_resident() {
+        let repository = memory_only();
+        repository.set("t", "cold", json!(1)).await.unwrap();
+        repository.set("t", "hot", json!(2)).await.unwrap();
+        pretend_flushed(&repository).await;
+        age(&repository, "cold", 0).await;
+        age(&repository, "hot", 1_000).await;
+
+        let outcome = repository.sweep_at(1_500, Some(900)).await;
+        assert_eq!(outcome.evicted, 1);
+        assert!(repository.lookup("t", "cold").await.is_none());
+        assert!(repository.lookup("t", "hot").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn reads_and_writes_refresh_the_access_clock() {
+        let repository = memory_only();
+        repository.set("t", "k", json!(1)).await.unwrap();
+        let entry = repository.lookup("t", "k").await.unwrap();
+
+        entry.last_access.store(u64::MAX, Ordering::Relaxed);
+        repository.read("t", "k", Value::clone).await.unwrap();
+        assert!(entry.last_access.load(Ordering::Relaxed) <= now_secs());
+
+        entry.last_access.store(u64::MAX, Ordering::Relaxed);
+        repository.set("t", "k", json!(2)).await.unwrap();
+        assert!(entry.last_access.load(Ordering::Relaxed) <= now_secs());
+    }
+
+    #[tokio::test]
+    async fn ttl_entries_are_purged_not_evicted() {
+        let repository = memory_only();
+        repository
+            .set_with_ttl("t", "session", json!(1), Duration::from_hours(1))
+            .await
+            .unwrap();
+        pretend_flushed(&repository).await;
+
+        let outcome = repository.sweep_at(now_secs() + 10_000, Some(900)).await;
+        assert_eq!(outcome, SweepOutcome::default());
+        assert!(repository.lookup("t", "session").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn disabled_eviction_keeps_everything() {
+        let repository = memory_only();
+        repository.set("t", "k", json!(1)).await.unwrap();
+        pretend_flushed(&repository).await;
+        assert_eq!(repository.idle_eviction, None);
+
+        let outcome = repository
+            .sweep_at(u64::MAX, repository.idle_eviction)
+            .await;
+        assert_eq!(outcome, SweepOutcome::default());
+        assert!(repository.lookup("t", "k").await.is_some());
+        assert_eq!(repository.memory_stats().entries, 1);
     }
 }

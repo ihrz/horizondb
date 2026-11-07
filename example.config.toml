@@ -23,6 +23,11 @@ idle_timeout_secs = 30
 max_lifetime_secs = 1800
 # How often buffered writes are batch-flushed to PostgreSQL (seconds).
 flush_interval_secs = 300
+# A document already flushed to PostgreSQL and neither read nor written for
+# this long leaves memory; its next access reloads it (one SELECT). Keeps the
+# RAM bounded by the working set instead of everything read since startup.
+# 0 keeps every loaded document in memory forever. Default 900.
+idle_eviction_secs = 900
 
 [auth]
 username = "admin"

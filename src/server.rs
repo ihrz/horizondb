@@ -116,10 +116,8 @@ pub async fn run(state: Arc<AppState>) -> anyhow::Result<()> {
 
     let graceful = async {
         let active_sessions = state.sessions.active_sessions().await;
-        let (memory_hits, memory_misses) = state.repository.memory_stats();
-        state
-            .metrics
-            .log_stats(active_sessions, memory_hits, memory_misses);
+        let memory = state.repository.memory_stats();
+        state.metrics.log_stats(active_sessions, memory);
         state.shutdown().await;
     };
     // A hung or slow PostgreSQL must never keep the process (and its file
@@ -316,9 +314,13 @@ async fn memory_purge_loop(state: Arc<AppState>) {
     let mut ticker = interval(MEMORY_PURGE_INTERVAL);
     loop {
         ticker.tick().await;
-        let purged = state.repository.purge_expired().await;
-        if purged > 0 {
-            tracing::debug!(purged, "expired memory entries removed");
+        let outcome = state.repository.sweep().await;
+        if outcome.purged + outcome.evicted > 0 {
+            tracing::debug!(
+                purged = outcome.purged,
+                evicted = outcome.evicted,
+                "memory sweep complete"
+            );
         }
     }
 }
@@ -328,10 +330,8 @@ async fn stats_loop(state: Arc<AppState>) {
     loop {
         ticker.tick().await;
         let active_sessions = state.sessions.active_sessions().await;
-        let (memory_hits, memory_misses) = state.repository.memory_stats();
-        state
-            .metrics
-            .log_stats(active_sessions, memory_hits, memory_misses);
+        let memory = state.repository.memory_stats();
+        state.metrics.log_stats(active_sessions, memory);
     }
 }
 

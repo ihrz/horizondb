@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod alloc;
 mod auth;
 mod config;
 mod db;
